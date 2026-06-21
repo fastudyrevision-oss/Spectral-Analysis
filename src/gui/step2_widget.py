@@ -1,0 +1,350 @@
+# -*- coding: utf-8 -*-
+"""
+Step 2 Widget - Automatic Peaks Detection
+
+Provides UI for peak detection with visualization and results table.
+"""
+
+from pathlib import Path
+
+import numpy as np
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
+    QTableWidget, QTableWidgetItem, QSplitter
+)
+from PyQt6.QtGui import QFont
+
+from src import setup_logger
+from src.config import STEP2_PARAMS
+from src.core.step2_peaks import PeaksDetector
+from src.io.file_reader import CSVReader
+from src.io.file_writer import CSVWriter, PlotGenerator
+from src.gui.gui_utils import (
+    ParameterControl, MatplotlibCanvas, FileSelector, WorkerThread,
+    show_error, show_info
+)
+
+logger = setup_logger(__name__)
+
+
+class Step2Widget(QWidget):
+    """
+    UI widget for Step 2: Automatic Peaks Detection.
+    
+    Allows users to:
+    - Select processed spectrum (from Step 1 or manual input)
+    - Adjust peak detection parameters
+    - Preview detected peaks
+    - Save results
+    """
+    
+    def __init__(self):
+        """Initialize Step 2 widget."""
+        super().__init__()
+        self.processed_data = None
+        self.detected_peaks = None
+        self.detector = None
+        self.worker_thread = None
+        
+        logger.info("Initializing Step 2 widget")
+        
+        # Main layout
+        main_layout = QHBoxLayout()
+        
+        # Left panel (controls)
+        left_panel = self._create_left_panel()
+        main_layout.addWidget(left_panel, stretch=0)
+        
+        # Right panel (visualization)
+        right_panel = self._create_right_panel()
+        main_layout.addWidget(right_panel, stretch=1)
+        
+        self.setLayout(main_layout)
+    
+    def _create_left_panel(self) -> QWidget:
+        """Create left control panel."""
+        panel = QWidget()
+        layout = QVBoxLayout()
+        
+        # Title
+        title = QLabel("Step 2: Automatic Peaks Detection")
+        title_font = QFont()
+        title_font.setBold(True)
+        title_font.setPointSize(12)
+        title.setFont(title_font)
+        layout.addWidget(title)
+        
+        # File selection
+        file_group = QGroupBox("Input File")
+        file_layout = QVBoxLayout()
+        self.file_selector = FileSelector(
+            "Processed Spectrum:", 
+            "CSV Files (*.csv)"
+        )
+        file_layout.addWidget(self.file_selector)
+        file_group.setLayout(file_layout)
+        layout.addWidget(file_group)
+        
+        # Parameters group
+        params_group = QGroupBox("Parameters")
+        params_layout = QVBoxLayout()
+        
+        self.height_control = ParameterControl(
+            "Height Multiplier", 0.5, 5.0, STEP2_PARAMS['HEIGHT_MULTIPLIER'], 
+            step=0.1, decimals=1
+        )
+        params_layout.addWidget(self.height_control)
+        
+        self.prominence_control = ParameterControl(
+            "Prominence", 0.001, 0.5, STEP2_PARAMS['PROMINENCE'], 
+            step=0.01, decimals=3
+        )
+        params_layout.addWidget(self.prominence_control)
+        
+        self.baseline_window_control = ParameterControl(
+            "Baseline Window", 5, 100, STEP2_PARAMS['BASELINE_WINDOW'], 
+            step=5, decimals=0
+        )
+        params_layout.addWidget(self.baseline_window_control)
+        
+        self.baseline_k_control = ParameterControl(
+            "Baseline K", 0.5, 5.0, STEP2_PARAMS['BASELINE_K'], 
+            step=0.1, decimals=1
+        )
+        params_layout.addWidget(self.baseline_k_control)
+        
+        params_group.setLayout(params_layout)
+        layout.addWidget(params_group)
+        
+        # Process button
+        self.process_button = QPushButton("Detect Peaks")
+        self.process_button.setStyleSheet(
+            "QPushButton { background-color: #2E86AB; color: white; "
+            "padding: 8px; font-weight: bold; border-radius: 4px; }"
+        )
+        self.process_button.clicked.connect(self._on_process_clicked)
+        layout.addWidget(self.process_button)
+        
+        # Save button
+        self.save_button = QPushButton("Save Results")
+        self.save_button.setEnabled(False)
+        self.save_button.clicked.connect(self._on_save_clicked)
+        layout.addWidget(self.save_button)
+        
+        # Info panel
+        info_group = QGroupBox("Info")
+        info_layout = QVBoxLayout()
+        self.info_label = QLabel("Ready to detect peaks")
+        self.info_label.setWordWrap(True)
+        info_layout.addWidget(self.info_label)
+        info_group.setLayout(info_layout)
+        layout.addWidget(info_group)
+        
+        layout.addStretch()
+        panel.setLayout(layout)
+        panel.setMaximumWidth(350)
+        return panel
+    
+    def _create_right_panel(self) -> QWidget:
+        """Create right visualization panel."""
+        panel = QWidget()
+        layout = QVBoxLayout()
+        
+        # Splitter for plot and table
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        
+        # Plot canvas
+        self.canvas = MatplotlibCanvas(width=7, height=4, dpi=100)
+        splitter.addWidget(self.canvas)
+        
+        # Results table
+        table_label = QLabel("Detected Peaks Preview")
+        table_font = QFont()
+        table_font.setBold(True)
+        table_label.setFont(table_font)
+        layout.addWidget(table_label)
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Wavelength (nm)", "Intensity"])
+        self.table.setMaximumHeight(200)
+        splitter.addWidget(self.table)
+        
+        splitter.setSizes([600, 200])
+        layout.addWidget(splitter)
+        
+        panel.setLayout(layout)
+        return panel
+    
+    def _on_process_clicked(self):
+        """Detect peaks when button clicked."""
+        if self.file_selector.get_filepath() is None:
+            show_error("Error", "Please select an input file")
+            return
+        
+        self.info_label.setText("Loading file...")
+        self.process_button.setEnabled(False)
+        
+        # Try to load as processed spectra (with Corrected column)
+        try:
+            reader = CSVReader()
+            import pandas as pd
+            
+            df = pd.read_csv(str(self.file_selector.get_filepath()))
+            
+            # Try to find wavelength and corrected columns
+            wl_col = None
+            corrected_col = None
+            
+            for col in df.columns:
+                col_lower = col.lower()
+                if 'wavelength' in col_lower or 'wl' in col_lower:
+                    wl_col = col
+                if 'corrected' in col_lower:
+                    corrected_col = col
+            
+            if wl_col is None or corrected_col is None:
+                # Check if this looks like a detected peaks file (has only wavelength + intensity)
+                has_wl = any('wavelength' in col.lower() or 'wl' in col.lower() for col in df.columns)
+                has_intensity = any('intensity' in col.lower() or 'signal' in col.lower() for col in df.columns)
+                
+                if has_wl and has_intensity and not corrected_col:
+                    show_error("Error", 
+                        "This file appears to be a detected peaks output file.\n\n"
+                        "Step 2 requires the PROCESSED spectrum output from Step 1.\n\n"
+                        "Please load the 'SG_ALS_LIBS_processed.csv' file from Step 1 output.")
+                    self.process_button.setEnabled(True)
+                    self.info_label.setText("Error: Wrong file format")
+                    return
+                else:
+                    show_error("Error", 
+                        "Cannot find required columns in file.\n\n"
+                        "Expected: Wavelength and Corrected columns\n"
+                        "This file may not be properly formatted.")
+                    self.process_button.setEnabled(True)
+                    self.info_label.setText("Error: Missing required columns")
+                    return
+            else:
+                # Create ProcessedSpectra-like object
+                class ProcessedSpectra:
+                    pass
+                
+                self.processed_data = ProcessedSpectra()
+                self.processed_data.wavelength = df[wl_col].values.astype(float)
+                self.processed_data.corrected = df[corrected_col].values.astype(float)
+            
+            logger.info(f"Loaded spectrum: {len(self.processed_data.wavelength)} points")
+            
+        except Exception as e:
+            logger.error(f"Failed to load file: {e}")
+            show_error("Error", f"Failed to load file:\n{e}")
+            self.process_button.setEnabled(True)
+            self.info_label.setText("Error loading file")
+            return
+        
+        # Create detector with parameters
+        params = {
+            'HEIGHT_MULTIPLIER': self.height_control.value(),
+            'PROMINENCE': self.prominence_control.value(),
+            'BASELINE_WINDOW': int(self.baseline_window_control.value()),
+            'BASELINE_K': self.baseline_k_control.value()
+        }
+        
+        self.detector = PeaksDetector(params)
+        
+        # Process in worker thread
+        self.info_label.setText("Detecting peaks... (may take a moment)")
+        
+        self.worker_thread = WorkerThread(
+            self.detector.detect_peaks,
+            self.processed_data.wavelength,
+            self.processed_data.corrected
+        )
+        
+        self.worker_thread.finished.connect(self._on_detection_finished)
+        self.worker_thread.error.connect(self._on_detection_error)
+        self.worker_thread.start()
+    
+    def _on_detection_finished(self, result: dict):
+        """Handle detection completion."""
+        self.detected_peaks = result.get('result')
+        
+        if self.detected_peaks:
+            logger.info(f"Peaks detection complete: {len(self.detected_peaks)} peaks")
+            
+            # Extract peak data
+            peak_wl = np.array([p.wavelength for p in self.detected_peaks])
+            peak_int = np.array([p.intensity for p in self.detected_peaks])
+            
+            # Update plot
+            self.canvas.plot_peaks(
+                self.processed_data.wavelength,
+                self.processed_data.corrected,
+                peak_wl,
+                peak_int,
+                title="Detected Peaks"
+            )
+            
+            # Update table
+            self._update_table()
+            
+            # Update info
+            self.info_label.setText(
+                f"Detected: {len(self.detected_peaks)} peaks\n"
+                f"Wavelength range: {peak_wl.min():.2f} - {peak_wl.max():.2f} nm"
+            )
+            
+            # Enable save
+            self.save_button.setEnabled(True)
+        
+        self.process_button.setEnabled(True)
+    
+    def _on_detection_error(self, error: str):
+        """Handle detection error."""
+        logger.error(f"Detection error: {error}")
+        show_error("Detection Error", f"Peak detection failed:\n{error}")
+        self.info_label.setText("Error during detection")
+        self.process_button.setEnabled(True)
+    
+    def _update_table(self):
+        """Update results table with detected peaks."""
+        if self.detected_peaks is None:
+            return
+        
+        n_rows = min(10, len(self.detected_peaks))
+        self.table.setRowCount(n_rows)
+        
+        for i in range(n_rows):
+            peak = self.detected_peaks[i]
+            self.table.setItem(i, 0, QTableWidgetItem(f"{peak.wavelength:.5f}"))
+            self.table.setItem(i, 1, QTableWidgetItem(f"{peak.intensity:.6g}"))
+    
+    def _on_save_clicked(self):
+        """Save detected peaks to file."""
+        if self.detected_peaks is None:
+            show_error("Error", "No peaks to save")
+            return
+        
+        try:
+            writer = CSVWriter()
+            csv_path = writer.write_detected_peaks("detected_peaks.csv", self.detected_peaks)
+            logger.info(f"Saved detected peaks to {csv_path}")
+            
+            # Generate plot
+            plot_gen = PlotGenerator()
+            peak_wl = np.array([p.wavelength for p in self.detected_peaks])
+            peak_int = np.array([p.intensity for p in self.detected_peaks])
+            plot_path = plot_gen.plot_step2_peaks(
+                self.processed_data.wavelength,
+                self.processed_data.corrected,
+                self.detected_peaks,
+                "Automatic_peaks_identification.png"
+            )
+            logger.info(f"Saved peak plot to {plot_path}")
+            
+            show_info("Success", f"Results saved:\n- {csv_path}\n- {plot_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save results: {e}")
+            show_error("Error", f"Failed to save results:\n{e}")

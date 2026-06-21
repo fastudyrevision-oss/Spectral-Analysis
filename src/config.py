@@ -1,0 +1,67 @@
+# -*- coding: utf-8 -*-
+"""
+Configuration Management for Spectral Analysis Software
+
+All tunable parameters are centralized here for easy configuration.
+"""
+
+# ==========================================
+# STEP 1: SG-ALS BASELINE CORRECTION
+# ==========================================
+STEP1_PARAMS = {
+    'LAMBDA': 1e5,              # Smoothness parameter (larger = smoother baseline)
+    'P': 0.01,                  # Asymmetry parameter (lower = more asymmetric)
+    'NITER': 10,                # Number of ALS iterations
+    'WINDOW': 7,                # SG window size (must be odd)
+    'POLY': 3,                  # SG polynomial degree
+    'OFFSET': 4000,             # Visualization offset for display
+    'PEAK_REGION': (548, 555),  # Visualization region
+    'BACKGROUND_REGION': (560, 610),  # Background region
+}
+
+# ==========================================
+# STEP 2: PEAKS DETECTION
+# ==========================================
+STEP2_PARAMS = {
+    'HEIGHT_MULTIPLIER': 1.2,   # Peak height threshold = noise_level × multiplier
+    'PROMINENCE': 0.01,         # Minimum peak prominence
+    'BASELINE_WINDOW': 20,      # Local baseline filtering window
+    'BASELINE_K': 2,            # K factor for noise-based threshold
+}
+
+# ==========================================
+# STEP 3: NIST MATCHING
+# ==========================================
+STEP3_PARAMS = {
+    'TOLERANCE': 0.2,           # Wavelength matching tolerance (nm)
+    'MIN_SCORE_THRESHOLD': 0,   # Minimum score to report
+}
+
+# ==========================================
+# OUTPUT FORMATTING
+# ==========================================
+OUTPUT_CONFIG = {
+    'CSV_PRECISION': 12,        # Decimal places in CSV output
+    'PLOT_DPI': 600,            # Resolution for PNG output
+    'PLOT_FORMAT': 'png',       # Output image format
+}
+
+# ==========================================
+# INPUT VALIDATION RANGES
+# ==========================================
+VALIDATION_CONFIG = {
+    'MIN_DATA_POINTS': 100,
+    'MIN_WAVELENGTH': 100,      # nm
+    'MAX_WAVELENGTH': 2000,     # nm
+    'MIN_INTENSITY': -1e6,      # Can be negative
+    'MAX_INTENSITY': 1e6,
+}
+
+# ==========================================
+# LOGGING
+# ==========================================
+LOGGING_CONFIG = {
+    'LOG_LEVEL': 'INFO',        # DEBUG, INFO, WARNING, ERROR
+    'LOG_FILE': 'spectral_analysis.log',
+    'LOG_FORMAT': '[%(asctime)s] [%(levelname)s] %(name)s: %(message)s',
+}
