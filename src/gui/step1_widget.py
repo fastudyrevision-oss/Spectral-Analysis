@@ -24,6 +24,7 @@ from src.gui.gui_utils import (
     ParameterControl, MatplotlibCanvas, FileSelector, WorkerThread,
     show_error, show_info
 )
+from src.gui.theme import primary_button_style, instruction_banner_style, step_title_font
 
 logger = setup_logger(__name__)
 
@@ -43,13 +44,24 @@ class Step1Widget(QWidget):
     processing_started = pyqtSignal()
     processing_finished = pyqtSignal(dict)
     
-    def __init__(self):
-        """Initialize Step 1 widget."""
+    def __init__(self, file_history=None, notes_panel=None):
+        """
+        Initialize Step 1 widget.
+        
+        Parameters
+        ----------
+        file_history : FileHistory, optional
+            Shared file history object
+        notes_panel : NotesPanel, optional
+            Shared notes panel widget
+        """
         super().__init__()
         self.processed_data = None
         self.raw_data = None
         self.corrector = None
         self.worker_thread = None
+        self.file_history = file_history
+        self.notes_panel = notes_panel
         
         logger.info("Initializing Step 1 widget")
         
@@ -77,8 +89,28 @@ class Step1Widget(QWidget):
         title_font.setBold(True)
         title_font.setPointSize(12)
         title.setFont(title_font)
+        title.setStyleSheet(step_title_font(13))
         layout.addWidget(title)
-        
+
+        # Instructions
+        instructions = QLabel(
+            "📋 Instructions:\n"
+            "1. Click 'Spectrum File' to select your raw LIBS spectrum CSV.\n"
+            "   • File must have a 'Wavelength' column and an 'Intensity' (or 'Signal'/'Counts') column.\n"
+            "2. Adjust parameters if needed (defaults work for most spectra):\n"
+            "   • Lambda (λ): smoothness of the baseline — higher = smoother.\n"
+            "   • Asymmetry (p): lower values push the baseline below peaks.\n"
+            "   • Iterations: more iterations = more precise baseline.\n"
+            "   • SG Window / Poly: Savitzky-Golay smoothing settings (window must be odd).\n"
+            "3. Click 'Process' to run SG smoothing + ALS baseline correction.\n"
+            "4. Inspect the corrected spectrum in the plot on the right.\n"
+            "5. Click 'Save Results' to export 'SG_ALS_LIBS_processed.csv' and the baseline plot.\n"
+            "   ⚠ The saved CSV is required as input for Step 2."
+        )
+        instructions.setWordWrap(True)
+        instructions.setStyleSheet(instruction_banner_style())
+        layout.addWidget(instructions)
+
         # File selection
         file_group = QGroupBox("Input File")
         file_layout = QVBoxLayout()
@@ -121,11 +153,8 @@ class Step1Widget(QWidget):
         layout.addWidget(params_group)
         
         # Process button
-        self.process_button = QPushButton("Process")
-        self.process_button.setStyleSheet(
-            "QPushButton { background-color: #2E86AB; color: white; "
-            "padding: 8px; font-weight: bold; border-radius: 4px; }"
-        )
+        self.process_button = QPushButton("⚙  Process")
+        self.process_button.setStyleSheet(primary_button_style())
         self.process_button.clicked.connect(self._on_process_clicked)
         layout.addWidget(self.process_button)
         
@@ -195,16 +224,27 @@ class Step1Widget(QWidget):
         self.info_label.setText("Loading file...")
         self.process_button.setEnabled(False)
         
+        # Log to notes panel
+        if self.notes_panel:
+            self.notes_panel.add_note("Starting baseline correction (Step 1)", "INFO")
+        
         # Read file
         try:
             reader = CSVReader()
             self.raw_data = reader.read_raw_spectra(str(self.file_selector.get_filepath()))
             logger.info(f"Loaded spectrum: {len(self.raw_data.wavelength)} points")
+            if self.notes_panel:
+                self.notes_panel.add_note(
+                    f"File loaded: {self.file_selector.get_filepath().name} ({len(self.raw_data.wavelength)} points)", 
+                    "SUCCESS"
+                )
         except Exception as e:
             logger.error(f"Failed to load file: {e}")
             show_error("Error", f"Failed to load file:\n{e}")
             self.process_button.setEnabled(True)
             self.info_label.setText("Error loading file")
+            if self.notes_panel:
+                self.notes_panel.add_note(f"File loading failed: {str(e)}", "ERROR")
             return
         
         # Create corrector with parameters
@@ -237,6 +277,8 @@ class Step1Widget(QWidget):
         
         if self.processed_data:
             logger.info("Baseline correction complete")
+            if self.notes_panel:
+                self.notes_panel.add_note("Baseline correction completed successfully", "SUCCESS")
             
             # Update plot
             self.canvas.plot_spectrum(
@@ -266,6 +308,8 @@ class Step1Widget(QWidget):
         logger.error(f"Processing error: {error}")
         show_error("Processing Error", f"Baseline correction failed:\n{error}")
         self.info_label.setText("Error during processing")
+        if self.notes_panel:
+            self.notes_panel.add_note(f"Processing error: {error}", "ERROR")
         self.process_button.setEnabled(True)
     
     def _update_table(self):

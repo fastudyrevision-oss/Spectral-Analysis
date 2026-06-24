@@ -38,6 +38,24 @@ STEP3_PARAMS = {
 }
 
 # ==========================================
+# STEP 4: ELEMENTAL PREFERENCES
+# ==========================================
+STEP4_PARAMS = {
+    'MIN_SCORE': 0,             # Minimum score threshold for analysis
+    'CONFIDENCE_THRESHOLD': 0.5, # Confidence threshold for element identification
+}
+
+# ==========================================
+# STEP 5: VALIDATION WITH REFERENCE SPECTRA
+# ==========================================
+STEP5_PARAMS = {
+    'WINDOW': 0.5,              # Search window around each line (nm)
+    'MIN_POINTS': 5,            # Minimum data points per region
+    'INTERPOLATION_KIND': 'linear',  # 'linear' or 'cubic'
+    'VC_THRESHOLD': 0.8,        # Validation coefficient threshold
+}
+
+# ==========================================
 # OUTPUT FORMATTING
 # ==========================================
 OUTPUT_CONFIG = {

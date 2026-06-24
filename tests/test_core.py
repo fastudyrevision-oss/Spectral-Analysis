@@ -2,16 +2,22 @@
 """
 Test Suite for Core Processing Algorithms
 
-Tests Step 1, 2, and 3 algorithms with various inputs and edge cases.
+Tests Step 1, 2, 3, 4, and 5 algorithms with various inputs and edge cases.
 """
 
 import pytest
 import numpy as np
+import pandas as pd
 
-from src.config import STEP1_PARAMS, STEP2_PARAMS, STEP3_PARAMS
+from src.config import (
+    STEP1_PARAMS, STEP2_PARAMS, STEP3_PARAMS,
+    STEP4_PARAMS, STEP5_PARAMS
+)
 from src.core.step1_sg_als import BaselineCorrection
 from src.core.step2_peaks import PeaksDetector
 from src.core.step3_nist_matching import NISTMatcher
+from src.core.step4_elemental_preferences import ElementalPreferencesAnalyzer
+from src.core.step5_validation import ValidationAnalyzer
 from src.exceptions import DataValidationError, ProcessingError
 from src.io.data_models import DetectedPeak
 
@@ -342,3 +348,298 @@ class TestDataModels:
         
         assert match.observed_wl == 300.0
         assert match.element == 'Ca'
+
+
+class TestStep4ElementalPreferences:
+    """Tests for Step 4: Elemental Preferences Analysis"""
+    
+    def test_initialization(self):
+        """Test ElementalPreferencesAnalyzer initialization."""
+        analyzer = ElementalPreferencesAnalyzer()
+        assert analyzer.min_score == STEP4_PARAMS['MIN_SCORE']
+    
+    def test_custom_parameters(self):
+        """Test with custom parameters."""
+        params = {'MIN_SCORE': 100}
+        analyzer = ElementalPreferencesAnalyzer(params)
+        assert analyzer.min_score == 100
+    
+    def test_column_detection(self):
+        """Test automatic column detection."""
+        # Create test dataframe with varied column names
+        df = pd.DataFrame({
+            'Observed_WL': [300.0, 400.0],
+            'Matched_WL': [300.1, 400.1],
+            'Score': [1000, 2000],
+            'Element': ['Ca', 'Fe']
+        })
+        
+        analyzer = ElementalPreferencesAnalyzer()
+        df_normalized = analyzer.detect_column_names(df)
+        
+        assert 'Observed_WL' in df_normalized.columns
+        assert 'Matched_WL' in df_normalized.columns
+        assert 'Score' in df_normalized.columns
+        assert 'Element' in df_normalized.columns
+    
+    def test_input_validation(self):
+        """Test input validation."""
+        analyzer = ElementalPreferencesAnalyzer()
+        
+        # Valid data
+        df = pd.DataFrame({
+            'Observed_WL': [300.0],
+            'Matched_WL': [300.1],
+            'Score': [1000],
+            'Element': ['Ca']
+        })
+        
+        assert analyzer.validate_input(df) == True
+        
+        # Invalid data - missing columns
+        df_invalid = pd.DataFrame({'col1': [1], 'col2': [2]})
+        with pytest.raises(Exception):
+            analyzer.validate_input(df_invalid)
+    
+    def test_peak_competition_single_peak(self):
+        """Test peak-wise competition with single peak."""
+        df = pd.DataFrame({
+            'Observed_WL': [300.0, 300.0],
+            'Matched_WL': [300.1, 300.1],
+            'Score': [1000, 500],
+            'Element': ['Ca', 'Fe']
+        })
+        
+        analyzer = ElementalPreferencesAnalyzer()
+        competition = analyzer.analyze_peak_competition(df)
+        
+        assert len(competition) == 1
+        assert competition.iloc[0]['Winner'] == 'Ca'
+        assert competition.iloc[0]['Max_Score'] == 1000
+    
+    def test_element_ranking(self):
+        """Test element ranking."""
+        df = pd.DataFrame({
+            'Observed_WL': [300.0, 300.0, 400.0, 400.0],
+            'Matched_WL': [300.1, 300.1, 400.1, 400.1],
+            'Score': [1000, 500, 2000, 1500],
+            'Element': ['Ca', 'Fe', 'Ca', 'Fe']
+        })
+        
+        competition = pd.DataFrame({
+            'Matched_WL': [300.1, 400.1],
+            'Winner': ['Ca', 'Ca'],
+            'Max_Score': [1000, 2000]
+        })
+        
+        analyzer = ElementalPreferencesAnalyzer()
+        ranking, primary = analyzer.analyze_element_ranking(df, competition)
+        
+        assert primary == 'Ca'
+        assert ranking.iloc[0]['Element'] == 'Ca'
+        assert ranking.iloc[0]['Wins'] == 2
+    
+    def test_combine_matches_multiple_files(self):
+        """Test combining multiple matching files."""
+        df1 = pd.DataFrame({
+            'Observed_WL': [300.0],
+            'Matched_WL': [300.1],
+            'Score': [1000],
+            'Element': ['Ca']
+        })
+        
+        df2 = pd.DataFrame({
+            'Observed_WL': [400.0],
+            'Matched_WL': [400.1],
+            'Score': [2000],
+            'Element': ['Fe']
+        })
+        
+        analyzer = ElementalPreferencesAnalyzer()
+        combined = analyzer.combine_matches([df1, df2])
+        
+        assert len(combined) == 2
+        assert 'Ca' in combined['Element'].values
+        assert 'Fe' in combined['Element'].values
+    
+    def test_winner_lines_extraction(self):
+        """Test extraction of winner lines."""
+        competition = pd.DataFrame({
+            'Matched_WL': [300.1, 400.1],
+            'Winner': ['Ca', 'Fe'],
+            'Max_Score': [1000, 2000],
+            'Num_Competitors': [3, 2]
+        })
+        
+        analyzer = ElementalPreferencesAnalyzer()
+        winners = analyzer.extract_winner_lines(competition)
+        
+        assert len(winners) == 2
+        assert 'Winning_Element' in winners.columns
+        assert 'Confidence_Score' in winners.columns
+
+
+class TestStep5Validation:
+    """Tests for Step 5: Validation with Reference Spectra"""
+    
+    def test_initialization(self):
+        """Test ValidationAnalyzer initialization."""
+        analyzer = ValidationAnalyzer()
+        assert analyzer.window == STEP5_PARAMS['WINDOW']
+        assert analyzer.min_points == STEP5_PARAMS['MIN_POINTS']
+    
+    def test_custom_parameters(self):
+        """Test with custom parameters."""
+        params = {
+            'WINDOW': 1.0,
+            'MIN_POINTS': 10,
+            'INTERPOLATION_KIND': 'cubic'
+        }
+        analyzer = ValidationAnalyzer(params)
+        assert analyzer.window == 1.0
+        assert analyzer.min_points == 10
+    
+    def test_validation_coefficient_perfect_correlation(self):
+        """Test correlation calculation - perfect correlation."""
+        p = np.array([1, 2, 3, 4, 5], dtype=np.float64)
+        r = np.array([1, 2, 3, 4, 5], dtype=np.float64)
+        
+        analyzer = ValidationAnalyzer()
+        vc = analyzer.validation_coefficient(p, r)
+        
+        # Perfect correlation should be 1.0
+        assert abs(vc - 1.0) < 1e-10
+    
+    def test_validation_coefficient_zero_variance(self):
+        """Test correlation calculation - zero variance."""
+        p = np.array([5, 5, 5, 5, 5], dtype=np.float64)
+        r = np.array([1, 2, 3, 4, 5], dtype=np.float64)
+        
+        analyzer = ValidationAnalyzer()
+        vc = analyzer.validation_coefficient(p, r)
+        
+        # Zero variance should return NaN
+        assert np.isnan(vc)
+    
+    def test_validation_coefficient_negative_correlation(self):
+        """Test correlation calculation - negative correlation."""
+        p = np.array([5, 4, 3, 2, 1], dtype=np.float64)
+        r = np.array([1, 2, 3, 4, 5], dtype=np.float64)
+        
+        analyzer = ValidationAnalyzer()
+        vc = analyzer.validation_coefficient(p, r)
+        
+        # Perfect negative correlation should be -1.0
+        assert abs(vc - (-1.0)) < 1e-10
+    
+    def test_validation_coefficient_short_array(self):
+        """Test correlation with insufficient points."""
+        p = np.array([1], dtype=np.float64)
+        r = np.array([1], dtype=np.float64)
+        
+        analyzer = ValidationAnalyzer()
+        vc = analyzer.validation_coefficient(p, r)
+        
+        # Should return NaN for < 2 points
+        assert np.isnan(vc)
+    
+    def test_spectrum_columns_normalization(self):
+        """Test spectrum column name normalization."""
+        df = pd.DataFrame({
+            'wavelength (nm)': [200, 300, 400],
+            'Intensity': [100, 200, 150]
+        })
+        
+        analyzer = ValidationAnalyzer()
+        normalized = analyzer.normalize_spectrum_columns(df)
+        
+        assert 'wavelength' in normalized.columns
+        assert 'intensity' in normalized.columns
+        assert len(normalized) == 3
+    
+    def test_region_extraction(self):
+        """Test spectral region extraction."""
+        spectrum = pd.DataFrame({
+            'wavelength': np.linspace(200, 800, 1000),
+            'intensity': np.ones(1000) * 100
+        })
+        
+        analyzer = ValidationAnalyzer({'WINDOW': 1.0, 'MIN_POINTS': 2})
+        wl, intensity = analyzer.extract_region(spectrum, 400)
+        
+        # Should extract region around 400 nm
+        assert 398 < wl.min() < 400
+        assert 400 < wl.max() < 402
+        assert len(wl) > 0
+    
+    def test_region_extraction_insufficient_points(self):
+        """Test region extraction with insufficient points."""
+        spectrum = pd.DataFrame({
+            'wavelength': np.linspace(200, 800, 10),  # Sparse data
+            'intensity': np.ones(10) * 100
+        })
+        
+        analyzer = ValidationAnalyzer({'WINDOW': 0.5, 'MIN_POINTS': 100})
+        
+        # Should raise error for insufficient points
+        with pytest.raises(Exception):
+            analyzer.extract_region(spectrum, 400)
+    
+    def test_input_validation(self):
+        """Test input validation."""
+        processed = pd.DataFrame({
+            'wavelength': [200, 300, 400],
+            'intensity': [100, 200, 150]
+        })
+        
+        reference = pd.DataFrame({
+            'wavelength': [200, 300, 400],
+            'intensity': [100, 200, 150]
+        })
+        
+        analyzer = ValidationAnalyzer()
+        assert analyzer.validate_input(processed, reference) == True
+        
+        # Empty dataframe should fail
+        empty_df = pd.DataFrame()
+        with pytest.raises(Exception):
+            analyzer.validate_input(empty_df, reference)
+    
+    def test_single_line_validation(self):
+        """Test validation of single spectral line."""
+        processed = pd.DataFrame({
+            'wavelength': np.linspace(399, 401, 50),
+            'intensity': np.ones(50) * 100
+        })
+        
+        reference = pd.DataFrame({
+            'wavelength': np.linspace(399, 401, 50),
+            'intensity': np.ones(50) * 100
+        })
+        
+        analyzer = ValidationAnalyzer({'WINDOW': 0.5, 'MIN_POINTS': 2})
+        result = analyzer.validate_line(processed, reference, 400.0)
+        
+        assert result['wavelength'] == 400.0
+        assert 'validation_coefficient' in result
+    
+    def test_spectrum_validation_batch(self):
+        """Test batch validation of multiple lines."""
+        processed = pd.DataFrame({
+            'wavelength': np.linspace(200, 800, 1000),
+            'intensity': np.ones(1000) * 100 + np.sin(np.linspace(0, 20, 1000)) * 50
+        })
+        
+        reference = pd.DataFrame({
+            'wavelength': np.linspace(200, 800, 1000),
+            'intensity': np.ones(1000) * 100 + np.sin(np.linspace(0, 20, 1000)) * 50
+        })
+        
+        target_lines = [300, 400, 500]
+        
+        analyzer = ValidationAnalyzer({'WINDOW': 0.5, 'MIN_POINTS': 2})
+        results = analyzer.validate_spectrum(processed, reference, target_lines)
+        
+        assert len(results) == len(target_lines)
+        assert 'Wavelength_nm' in results.columns
+        assert 'Validation_Coefficient' in results.columns

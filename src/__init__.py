@@ -3,6 +3,7 @@
 
 from .config import (
     STEP1_PARAMS, STEP2_PARAMS, STEP3_PARAMS,
+    STEP4_PARAMS, STEP5_PARAMS,
     OUTPUT_CONFIG, VALIDATION_CONFIG, LOGGING_CONFIG
 )
 from .logger import setup_logger
@@ -25,7 +26,7 @@ __version__ = "1.0.0"
 __author__ = "Spectral Analysis Team"
 
 __all__ = [
-    'STEP1_PARAMS', 'STEP2_PARAMS', 'STEP3_PARAMS',
+    'STEP1_PARAMS', 'STEP2_PARAMS', 'STEP3_PARAMS', 'STEP4_PARAMS', 'STEP5_PARAMS',
     'OUTPUT_CONFIG', 'VALIDATION_CONFIG', 'LOGGING_CONFIG',
     'setup_logger',
     'SpectralAnalysisError', 'DataValidationError', 'ConfigurationError',

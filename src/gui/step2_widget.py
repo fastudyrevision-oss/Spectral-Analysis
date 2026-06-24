@@ -24,6 +24,7 @@ from src.gui.gui_utils import (
     ParameterControl, MatplotlibCanvas, FileSelector, WorkerThread,
     show_error, show_info
 )
+from src.gui.theme import primary_button_style, instruction_banner_style, step_title_font
 
 logger = setup_logger(__name__)
 
@@ -39,13 +40,24 @@ class Step2Widget(QWidget):
     - Save results
     """
     
-    def __init__(self):
-        """Initialize Step 2 widget."""
+    def __init__(self, file_history=None, notes_panel=None):
+        """
+        Initialize Step 2 widget.
+        
+        Parameters
+        ----------
+        file_history : FileHistory, optional
+            Shared file history object
+        notes_panel : NotesPanel, optional
+            Shared notes panel widget
+        """
         super().__init__()
         self.processed_data = None
         self.detected_peaks = None
         self.detector = None
         self.worker_thread = None
+        self.file_history = file_history
+        self.notes_panel = notes_panel
         
         logger.info("Initializing Step 2 widget")
         
@@ -73,8 +85,28 @@ class Step2Widget(QWidget):
         title_font.setBold(True)
         title_font.setPointSize(12)
         title.setFont(title_font)
+        title.setStyleSheet(step_title_font(13))
         layout.addWidget(title)
-        
+
+        # Instructions
+        instructions = QLabel(
+            "📋 Instructions:\n"
+            "1. Click 'Processed Spectrum' to load the corrected spectrum CSV from Step 1.\n"
+            "   • Expected file: 'SG_ALS_LIBS_processed.csv' (must contain 'Wavelength' and 'Corrected' columns).\n"
+            "2. Adjust detection parameters if needed:\n"
+            "   • Height Multiplier: peak must be this many times above the local noise level.\n"
+            "   • Prominence: minimum height a peak stands out from surrounding baseline.\n"
+            "   • Baseline Window: window size (in points) for computing local noise.\n"
+            "   • Baseline K: noise sensitivity — higher K = fewer peaks detected.\n"
+            "3. Click 'Detect Peaks' to find all spectral peaks automatically.\n"
+            "4. Detected peaks are shown on the plot and listed in the table below.\n"
+            "5. Click 'Save Results' to export 'detected_peaks.csv' and the peak plot.\n"
+            "   ⚠ The saved CSV is required as input for Step 3."
+        )
+        instructions.setWordWrap(True)
+        instructions.setStyleSheet(instruction_banner_style())
+        layout.addWidget(instructions)
+
         # File selection
         file_group = QGroupBox("Input File")
         file_layout = QVBoxLayout()
@@ -118,11 +150,8 @@ class Step2Widget(QWidget):
         layout.addWidget(params_group)
         
         # Process button
-        self.process_button = QPushButton("Detect Peaks")
-        self.process_button.setStyleSheet(
-            "QPushButton { background-color: #2E86AB; color: white; "
-            "padding: 8px; font-weight: bold; border-radius: 4px; }"
-        )
+        self.process_button = QPushButton("🔍  Detect Peaks")
+        self.process_button.setStyleSheet(primary_button_style())
         self.process_button.clicked.connect(self._on_process_clicked)
         layout.addWidget(self.process_button)
         

@@ -14,7 +14,8 @@ import numpy as np
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QDoubleSpinBox,
-    QSlider, QFileDialog, QMessageBox, QProgressDialog
+    QSlider, QFileDialog, QMessageBox, QProgressDialog, QPushButton, QComboBox,
+    QPlainTextEdit
 )
 from PyQt6.QtGui import QFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -290,25 +291,29 @@ class FileSelector(QWidget):
         
         # File path display
         self.path_label = QLabel("(No file selected)")
-        self.path_label.setStyleSheet("color: gray; font-style: italic;")
+        self.path_label.setStyleSheet(
+            "color: #555970; font-style: italic;"
+        )
         layout.addWidget(self.path_label, stretch=1)
-        
+
         self.setLayout(layout)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        
+
     def mousePressEvent(self, event):
         """Open file dialog when clicked."""
         filepath, _ = QFileDialog.getOpenFileName(
-            self, 
+            self,
             "Select File",
             str(Path.home()),
             self.file_filter
         )
-        
+
         if filepath:
             self.filepath = Path(filepath)
             self.path_label.setText(str(self.filepath.name))
-            self.path_label.setStyleSheet("color: black; font-style: normal;")
+            self.path_label.setStyleSheet(
+                "color: #2DD4BF; font-style: normal; font-weight: 600;"
+            )
     
     def get_filepath(self) -> Path:
         """Get selected file path."""
@@ -319,7 +324,9 @@ class FileSelector(QWidget):
         if filepath and filepath.exists():
             self.filepath = filepath
             self.path_label.setText(str(filepath.name))
-            self.path_label.setStyleSheet("color: black; font-style: normal;")
+            self.path_label.setStyleSheet(
+                "color: #2DD4BF; font-style: normal; font-weight: 600;"
+            )
 
 
 def show_error(title: str, message: str):
@@ -335,3 +342,252 @@ def show_info(title: str, message: str):
 def show_warning(title: str, message: str):
     """Show warning dialog."""
     QMessageBox.warning(None, title, message)
+
+
+# ==========================================
+# FILE HISTORY & NOTES COMPONENTS
+# ==========================================
+
+class FileHistory:
+    """Manages file history and recent files list."""
+    
+    def __init__(self, max_items: int = 10):
+        """
+        Initialize file history.
+        
+        Parameters
+        ----------
+        max_items : int
+            Maximum number of recent files to keep
+        """
+        self.max_items = max_items
+        self.history = []
+    
+    def add_file(self, filepath: str):
+        """Add file to history."""
+        if filepath in self.history:
+            self.history.remove(filepath)
+        self.history.insert(0, filepath)
+        if len(self.history) > self.max_items:
+            self.history.pop()
+    
+    def get_recent(self) -> list:
+        """Get recent files list."""
+        return self.history.copy()
+    
+    def clear(self):
+        """Clear history."""
+        self.history.clear()
+
+
+class NotesPanel(QWidget):
+    """
+    Notes/status panel for displaying information and notes.
+    
+    Shows processing status, notes, and operation history.
+    """
+    
+    def __init__(self, max_lines: int = 50):
+        """
+        Initialize notes panel.
+        
+        Parameters
+        ----------
+        max_lines : int
+            Maximum number of lines to keep in history
+        """
+        super().__init__()
+        self.max_lines = max_lines
+        self.notes = []
+        
+        layout = QVBoxLayout()
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Title
+        title = QLabel("📋 Notes & History")
+        title_font = title.font()
+        title_font.setBold(True)
+        title_font.setPointSize(10)
+        title.setFont(title_font)
+        layout.addWidget(title)
+        
+        # Notes display (plain text for non-editable display)
+        self.text_display = QPlainTextEdit()
+        self.text_display.setReadOnly(True)
+        self.text_display.setMaximumHeight(150)
+        # Styling is handled by the global dark stylesheet in theme.py
+        layout.addWidget(self.text_display)
+        
+        # Button bar
+        button_layout = QHBoxLayout()
+        
+        clear_btn = QPushButton("Clear")
+        clear_btn.setMaximumWidth(80)
+        clear_btn.clicked.connect(self.clear)
+        button_layout.addWidget(clear_btn)
+        
+        copy_btn = QPushButton("Copy All")
+        copy_btn.setMaximumWidth(80)
+        copy_btn.clicked.connect(self._on_copy)
+        button_layout.addWidget(copy_btn)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+    
+    def add_note(self, note: str, note_type: str = "INFO"):
+        """
+        Add a note to the panel.
+        
+        Parameters
+        ----------
+        note : str
+            Note text
+        note_type : str
+            Type: 'INFO', 'SUCCESS', 'WARNING', 'ERROR'
+        """
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        
+        # Format note with icon
+        icons = {
+            'INFO': 'ℹ️',
+            'SUCCESS': '✅',
+            'WARNING': '⚠️',
+            'ERROR': '❌'
+        }
+        icon = icons.get(note_type, 'ℹ️')
+        
+        formatted_note = f"[{timestamp}] {icon} {note}"
+        self.notes.append(formatted_note)
+        
+        # Keep only max_lines
+        if len(self.notes) > self.max_lines:
+            self.notes.pop(0)
+        
+        # Update display
+        self.text_display.setPlainText('\n'.join(self.notes))
+        
+        # Auto-scroll to bottom
+        self.text_display.verticalScrollBar().setValue(
+            self.text_display.verticalScrollBar().maximum()
+        )
+    
+    def clear(self):
+        """Clear all notes."""
+        self.notes.clear()
+        self.text_display.clear()
+    
+    def _on_copy(self):
+        """Copy all notes to clipboard."""
+        from PyQt6.QtGui import QGuiApplication
+        QGuiApplication.clipboard().setText(self.text_display.toPlainText())
+        logger.info("Notes copied to clipboard")
+
+
+class FileSelectorWithHistory(QWidget):
+    """
+    Enhanced file selector with recent files dropdown.
+    
+    Combines file selection with quick access to recent files.
+    """
+    
+    def __init__(self, label: str, file_filter: str = "CSV Files (*.csv)", 
+                 history: FileHistory = None):
+        """
+        Initialize file selector with history.
+        
+        Parameters
+        ----------
+        label : str
+            Widget label
+        file_filter : str
+            File type filter for dialog
+        history : FileHistory
+            File history object (optional)
+        """
+        super().__init__()
+        self.label_text = label
+        self.file_filter = file_filter
+        self.filepath = None
+        self.history = history or FileHistory()
+        
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        
+        # Top row: Label and file path
+        top_layout = QHBoxLayout()
+        
+        label_widget = QLabel(label)
+        label_widget.setMinimumWidth(120)
+        top_layout.addWidget(label_widget)
+        
+        # File path display (clickable)
+        self.path_label = QLabel("(No file selected)")
+        self.path_label.setStyleSheet(
+            "color: gray; font-style: italic; padding: 5px; "
+            "border: 1px solid #ddd; border-radius: 3px; background-color: #f9f9f9;"
+        )
+        self.path_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.path_label.mousePressEvent = self._open_file_dialog
+        top_layout.addWidget(self.path_label, stretch=1)
+        
+        # Browse button
+        browse_btn = QPushButton("Browse...")
+        browse_btn.setMaximumWidth(100)
+        browse_btn.clicked.connect(self._open_file_dialog)
+        top_layout.addWidget(browse_btn)
+        
+        layout.addLayout(top_layout)
+        
+        # Recent files row
+        if self.history.get_recent():
+            recent_layout = QHBoxLayout()
+            recent_label = QLabel("Recent:")
+            recent_label.setMinimumWidth(120)
+            recent_label.setStyleSheet("color: #666; font-size: 9pt;")
+            recent_layout.addWidget(recent_label)
+            
+            self.recent_combo = QComboBox()
+            self.recent_combo.setMaximumWidth(300)
+            self.recent_combo.addItems(self.history.get_recent())
+            self.recent_combo.currentTextChanged.connect(self._on_recent_selected)
+            recent_layout.addWidget(self.recent_combo)
+            recent_layout.addStretch()
+            
+            layout.addLayout(recent_layout)
+        
+        self.setLayout(layout)
+    
+    def _open_file_dialog(self, event=None):
+        """Open file dialog when clicked."""
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, 
+            f"Select {self.label_text}",
+            str(Path.home()),
+            self.file_filter
+        )
+        
+        if filepath:
+            self.set_filepath(Path(filepath))
+    
+    def _on_recent_selected(self, filepath_str: str):
+        """Handle selection from recent files."""
+        if filepath_str:
+            self.set_filepath(Path(filepath_str))
+    
+    def set_filepath(self, filepath: Path):
+        """Set file path and update history."""
+        self.filepath = filepath
+        self.path_label.setText(str(self.filepath.name))
+        self.path_label.setStyleSheet(
+            "color: green; font-style: normal; padding: 5px; "
+            "border: 2px solid #4CAF50; border-radius: 3px; background-color: #f0f8f0; font-weight: bold;"
+        )
+        self.history.add_file(str(filepath))
+    
+    def get_filepath(self) -> Path:
+        """Get selected file path."""
+        return self.filepath

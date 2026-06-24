@@ -24,6 +24,7 @@ from src.gui.gui_utils import (
     ParameterControl, FileSelector, WorkerThread,
     show_error, show_info
 )
+from src.gui.theme import primary_button_style, instruction_banner_style, step_title_font
 
 logger = setup_logger(__name__)
 
@@ -40,14 +41,25 @@ class Step3Widget(QWidget):
     - Save matching results
     """
     
-    def __init__(self):
-        """Initialize Step 3 widget."""
+    def __init__(self, file_history=None, notes_panel=None):
+        """
+        Initialize Step 3 widget.
+        
+        Parameters
+        ----------
+        file_history : FileHistory, optional
+            Shared file history object
+        notes_panel : NotesPanel, optional
+            Shared notes panel widget
+        """
         super().__init__()
         self.detected_peaks = None
         self.nist_db = None
         self.matches = None
         self.matcher = None
         self.worker_thread = None
+        self.file_history = file_history
+        self.notes_panel = notes_panel
         
         logger.info("Initializing Step 3 widget")
         
@@ -73,8 +85,28 @@ class Step3Widget(QWidget):
         title_font.setBold(True)
         title_font.setPointSize(12)
         title.setFont(title_font)
+        title.setStyleSheet(step_title_font(13))
         layout.addWidget(title)
-        
+
+        # Instructions
+        instructions = QLabel(
+            "📋 Instructions:\n"
+            "1. 'Detected Peaks': load the peaks CSV from Step 2 (e.g. 'detected_peaks.csv').\n"
+            "   • File must have a wavelength column and an intensity column.\n"
+            "2. 'NIST Database': load an element reference CSV from the NIST database.\n"
+            "   • File must have a wavelength column; Element, Aki, and Relative Intensity columns are used if present.\n"
+            "   • Run this step once per element — repeat with a different NIST file to match another element.\n"
+            "3. Set Tolerance (nm): maximum allowed wavelength difference for a match (default 0.2 nm).\n"
+            "4. Set Min Score: minimum score to display a match — leave at 0 to see all matches.\n"
+            "5. Click 'Match Peaks' to cross-match detected peaks against the NIST database.\n"
+            "6. Results are listed in the table below, sortable by any column.\n"
+            "7. Click 'Save Results' to export 'LIBS_matching_results.csv'.\n"
+            "   ⚠ Run this step for each element and save each result file — all result files are required for Step 4."
+        )
+        instructions.setWordWrap(True)
+        instructions.setStyleSheet(instruction_banner_style())
+        layout.addWidget(instructions)
+
         # Files group
         files_group = QGroupBox("Input Files")
         files_layout = QHBoxLayout()
@@ -112,11 +144,8 @@ class Step3Widget(QWidget):
         # Buttons
         buttons_layout = QHBoxLayout()
         
-        self.match_button = QPushButton("Match Peaks")
-        self.match_button.setStyleSheet(
-            "QPushButton { background-color: #2E86AB; color: white; "
-            "padding: 8px; font-weight: bold; border-radius: 4px; }"
-        )
+        self.match_button = QPushButton("🔬  Match Peaks")
+        self.match_button.setStyleSheet(primary_button_style())
         self.match_button.clicked.connect(self._on_match_clicked)
         buttons_layout.addWidget(self.match_button)
         
