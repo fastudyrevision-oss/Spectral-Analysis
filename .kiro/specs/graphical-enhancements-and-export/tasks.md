@@ -1,0 +1,131 @@
+# Implementation Plan
+
+- [x] 1. Add theme helper functions to `src/gui/theme.py`
+  - Add `summary_banner_style() -> str` — dark card background (#151B2E), C_ACCENT2 border-left, C_TEXT2 text, 10 px padding
+  - Add `primary_element_label_style() -> str` — bold, 14pt, C_ACCENT2 colour, transparent background
+  - Add `mean_vc_label_style(colour: str) -> str` — bold, 14pt, caller-supplied colour, transparent background
+  - Add `progress_bar_style() -> str` — thin bar using C_ACCENT fill on C_BG_INPUT track, no text
+  - _Requirements: 8.3, 8.4, 8.6_
+
+- [x] 2. Create `src/gui/charts.py` — ChartEngine module
+  - Define module-level constants: `ACCENT_CYCLE = [C_ACCENT, C_ACCENT2, C_SUCCESS, C_WARN]`, `TIER_BINS = [0.0, 0.70, 0.85, 0.95, 1.0]`, `TIER_COLOURS = [C_ERROR, C_WARN, C_ACCENT, C_SUCCESS]`, `TIER_LABELS = ["Weak", "Moderate", "Good", "Excellent"]`
+  - Implement `apply_dark_style(fig, ax)` — sets figure facecolor to C_BG_DEEP, axes facecolor to C_BG_CARD, tick/label colour to C_TEXT, grid colour to C_BORDER
+  - Implement `get_bar_colours(n: int) -> list[str]` — returns list of n colours cycling through ACCENT_CYCLE
+  - Implement `classify_vc(vc) -> tuple[str, str, str]` — returns (tier_label, bg_hex, fg_hex): >0.95→Excellent/C_SUCCESS/#FFFFFF, 0.85-0.95→Good/C_ACCENT/#FFFFFF, 0.70-0.84→Moderate/C_WARN/#FFFFFF, <0.70→Weak/C_ERROR/#FFFFFF, null/NaN→Failed/C_BG_CARD/C_TEXT2
+  - Implement `render_ranking_chart(ax, ranking_df)` — horizontal bars sorted descending by (Wins, Total_Score), Wins integer annotations outside (right of) each bar end, ACCENT_CYCLE bar colours, dark style applied, placeholder "No data available" centred if df empty; wrap in try/except showing "Chart unavailable" on error
+  - Implement `render_score_scatter(ax, winner_lines_df)` — scatter points by Winning_Element colour (ACCENT_CYCLE for first 4, matplotlib default cycle beyond), Y-axis fixed [0.0, 1.0], one legend entry per distinct element, X-label "Wavelength (nm)", Y-label "Confidence Score", title "Emission Line Scores by Element", dark style applied, placeholder if empty; wrap in try/except
+  - Implement `render_vc_histogram(ax, validation_results_df)` — fixed bins TIER_BINS, each bin coloured by TIER_COLOURS, title "Validation Coefficient Distribution", X-label "Validation Coefficient (VC)", Y-label "Count", always-visible legend inside axes mapping colours to TIER_LABELS, exclude null VCs, dark style applied, placeholder if all null or empty; wrap in try/except
+  - _Requirements: 1, 2, 3, 9.6_
+
+- [x] 3. Create `src/gui/export_engine.py` — ExportEngine functions
+  - Implement `_figure_to_image_buffer(fig) -> BytesIO` — renders Figure to in-memory PNG buffer
+  - Implement `save_figure_png(fig, filepath, dpi=150) -> Path` — saves with C_BG_DEEP as figure facecolor, dpi≥150, deletes partial file on OSError via `Path.unlink(missing_ok=True)`, returns path
+  - Implement `export_step4_csv(ranking_df, winner_lines_df, competition_df, directory, base="analysis") -> list[Path]` — writes `{base}_ranking.csv`, `{base}_competition.csv`, `{base}_winners.csv` with header rows; on OSError cleans up partial files and re-raises
+  - Implement `export_step5_csv(validation_results_df, filepath) -> Path` — writes single CSV with header row; re-raises OSError
+  - Implement `export_step4_png(ranking_fig, scatter_fig, directory) -> list[Path]` — saves `ranking_chart.png` and `score_scatter.png` via `save_figure_png`
+  - Implement `export_step5_png(vc_fig, filepath) -> Path` — saves via `save_figure_png`
+  - Implement `generate_pdf_report(validation_results_df, params, vc_fig, processed_filename, reference_filename, target_wavelengths, filepath, step4_results=None, ranking_fig=None) -> Path`:
+    - Catch `ImportError` at function entry; raise `ImportError("reportlab is not installed. Run: pip install reportlab")`
+    - Use `reportlab.platypus.SimpleDocTemplate` with Paragraph/Spacer/Table/Image flowables
+    - Cover page: "Spectral Analysis Software", "LIBS Validation Report", ISO 8601 datetime, processed and reference filenames
+    - Parameters section table: WINDOW, MIN_POINTS, VC_THRESHOLD
+    - Summary section: total validated, count per Quality_Tier, average VC
+    - Detailed results table: Wavelength_nm, Validation_Coefficient, Status, Quality_Tier per row; "No results available" if df empty
+    - VC histogram embedded as Image via `_figure_to_image_buffer`
+    - Selected wavelengths list as Paragraph
+    - Optional Step 4 section if `step4_results is not None`: top-5 elements table + ranking chart Image
+    - Set doc metadata: title="LIBS Validation Report", author="Spectral Analysis Software"
+    - Delete partial file on any exception; re-raise
+  - _Requirements: 5, 6, 7_
+
+- [x] 4. Update `src/gui/step4_widget.py` — add charts, summary banner, export buttons, and progress bar
+  - Add imports: `QSplitter`, `QProgressBar`, `QColor` from PyQt6.QtWidgets/QtGui; `FigureCanvasQTAgg` from `matplotlib.backends.backend_qtagg`; `NavigationToolbar2QT` from `matplotlib.backends.backend_qtagg`; `Figure` from `matplotlib.figure`; `ChartEngine` from `src.gui.charts`; `export_step4_csv`, `export_step4_png` from `src.gui.export_engine`; `summary_banner_style`, `primary_element_label_style`, `progress_bar_style` from `src.gui.theme`
+  - In `__init__`, create `self.ranking_fig = Figure(figsize=(6, 3), dpi=100)`, `self.ranking_canvas = FigureCanvasQTAgg(self.ranking_fig)`, `self.ranking_toolbar = NavigationToolbar2QT(self.ranking_canvas)`; same for `self.scatter_fig`/`self.scatter_canvas`/`self.scatter_toolbar`; set `setMinimumHeight(220)` and `setMinimumWidth(300)` on both canvases
+  - Replace `main_layout.addWidget(self.results_tabs, stretch=1)` with a vertical `QSplitter`: top pane = `self.results_tabs`, bottom pane = `QWidget` with `QHBoxLayout` containing left panel (ranking canvas + toolbar) and right panel (scatter canvas + toolbar); set splitter sizes [55, 45]
+  - Add `self.summary_banner = QLabel("Run analysis to see summary")` with `summary_banner_style()` and `self.primary_element_label = QLabel("—")` with `primary_element_label_style()` into `_create_controls` between instructions and files group box
+  - Add `self.export_csv_button = QPushButton("Export CSV")` and `self.export_png_button = QPushButton("Export PNG")` — both `setEnabled(False)`, `setToolTip("No data — run analysis first")` — inserted in buttons_layout after save_button
+  - Add `self.progress_bar = QProgressBar()` with `setRange(0, 0)`, `progress_bar_style()`, `hide()` — inserted in controls_layout below buttons row
+  - In `_on_analyze_clicked`: call `self.progress_bar.show()`, `self.export_csv_button.setEnabled(False)`, `self.export_png_button.setEnabled(False)`
+  - In `_on_worker_error`: call `self.progress_bar.hide()`
+  - In `_on_analysis_finished` success path: call `self._update_charts()`, `self._update_summary_banner(self.analysis_results)`, `self.export_csv_button.setEnabled(True)`, `self.export_png_button.setEnabled(True)`, `self.progress_bar.hide()`
+  - Implement `_update_charts(self)`: clear and redraw ranking_fig and scatter_fig using `ChartEngine.render_ranking_chart` and `render_score_scatter`; call `canvas.draw()`; call `toolbar.home()` to reset zoom
+  - Implement `_update_summary_banner(self, analysis_results)`: extract primary element and wins from `ranking_df.iloc[0]`, total elements = `len(ranking_df)`, total peaks = `len(competition_df)`; update banner text and primary_element_label text and style
+  - Implement `_on_export_csv_clicked(self)`: open `QFileDialog.getExistingDirectory`; return if cancelled; call `export_step4_csv`; show success info or error dialog
+  - Implement `_on_export_png_clicked(self)`: open `QFileDialog.getExistingDirectory`; return if cancelled; call `export_step4_png`; show success info or error dialog
+  - _Requirements: 1, 2, 5.1, 6.1, 8.2, 8.3, 8.6, 9, 10_
+
+- [ ] 5. Update `src/gui/step5_widget.py` — add VC histogram, summary banner, colour badges, export buttons
+  - Add imports: `QSplitter`, `QProgressBar`, `QColor` from PyQt6; `FigureCanvasQTAgg`, `NavigationToolbar2QT` from `matplotlib.backends.backend_qtagg`; `Figure` from `matplotlib.figure`; `ChartEngine` from `src.gui.charts`; `export_step5_csv`, `export_step5_png`, `generate_pdf_report` from `src.gui.export_engine`; `summary_banner_style`, `mean_vc_label_style`, `progress_bar_style` from `src.gui.theme`
+  - In `__init__`, create `self.vc_fig = Figure(figsize=(8, 3), dpi=100)`, `self.vc_canvas = FigureCanvasQTAgg(self.vc_fig)`, `self.vc_toolbar = NavigationToolbar2QT(self.vc_canvas)`; set `setMinimumHeight(220)`, `setMinimumWidth(300)` on canvas
+  - Replace `main_layout.addWidget(self.results_table, stretch=1)` with vertical `QSplitter`: top = `self.results_table`, bottom = `QWidget` with `QVBoxLayout` containing `self.vc_canvas` and `self.vc_toolbar`; set splitter sizes [55, 45]
+  - Add `self.summary_banner = QLabel("Run validation to see summary")` with `summary_banner_style()` and `self.mean_vc_label = QLabel("—")` into `_create_controls` (after title, before instructions)
+  - Add `self.export_csv_button`, `self.export_png_button`, `self.export_pdf_button` — all `setEnabled(False)`, `setToolTip("No data — run analysis first")` — in buttons_layout
+  - Add `self.progress_bar = QProgressBar()` with `setRange(0, 0)`, `progress_bar_style()`, `hide()`
+  - In `_on_validate_clicked`: call `self.progress_bar.show()`, disable all three export buttons
+  - In `_on_worker_error`: call `self.progress_bar.hide()`
+  - In `_on_validation_finished` success path: call `self._update_chart()`, `self._update_summary_banner(self.validation_results)`, enable all three export buttons, `self.progress_bar.hide()`
+  - In `_populate_results_table`, replace old Good/Fair/Poor quality logic with `ChartEngine.classify_vc(vc_val)` → set `QTableWidgetItem` background to `QColor(bg_hex)` and foreground to `QColor(fg_hex)` for the Quality cell
+  - Implement `_update_chart(self)`: clear and redraw `self.vc_fig` using `ChartEngine.render_vc_histogram`; call `self.vc_canvas.draw()`; `self.vc_toolbar.home()`
+  - Implement `_update_summary_banner(self, validation_results)`: compute mean VC from non-null values, count per tier; update summary_banner text; apply `mean_vc_label_style(colour)` and set mean_vc_label text
+  - Implement `_on_export_csv_clicked`: `QFileDialog.getSaveFileName(filter="CSV Files (*.csv)")` → `export_step5_csv` → notification
+  - Implement `_on_export_png_clicked`: `QFileDialog.getSaveFileName(filter="PNG Files (*.png)")` → `export_step5_png` → notification
+  - Implement `_on_export_pdf_clicked`: `QFileDialog.getSaveFileName(filter="PDF Files (*.pdf)", default="LIBS_Validation_Report.pdf")` → return if cancelled; `generate_pdf_report(...)` with all params; on ImportError show "reportlab not installed" error; on success show_info with path; on other exception show_error
+  - _Requirements: 3, 4, 5.2, 6.2, 7, 8.4, 8.5, 8.6, 9, 10_
+
+- [~] 6. Update `src/gui/main_window.py` — Unicode-prefixed tab labels
+  - Change the five `self.tabs.addTab(...)` calls to use: "① Step 1: Baseline Correction", "② Step 2: Peak Detection", "③ Step 3: Element Identification", "④ Step 4: Elemental Preferences", "⑤ Step 5: Validation"
+  - Update `_on_tab_changed` `tab_names` list to match the new strings exactly
+  - _Requirements: 8.1_
+
+- [~] 7. Write unit tests for ChartEngine in `tests/gui/test_charts.py`
+  - Test `classify_vc` at exact boundary values: 0.0, 0.699, 0.70, 0.849, 0.85, 0.95, 0.951, 1.0, None, float('nan') — assert correct tier label, background colour, and foreground colour for each
+  - Test `get_bar_colours` for n=1, 4, 5, 8 — verify exact cycling order matching ACCENT_CYCLE
+  - Test `apply_dark_style`: figure facecolor equals C_BG_DEEP, axes facecolor equals C_BG_CARD after call
+  - Test `render_ranking_chart` with empty DataFrame: axes contains text "No data available"
+  - Test `render_score_scatter` with empty DataFrame: axes contains text "No data available"
+  - Test `render_vc_histogram` with all-null VC column: axes contains text "No data available"
+  - Test `render_ranking_chart` with 3-row DataFrame: axes X-label is "Wins", title is not empty
+  - Test `render_score_scatter` axis labels: X-label "Wavelength (nm)", Y-label "Confidence Score", title "Emission Line Scores by Element"
+  - Test `render_vc_histogram` axis labels: title "Validation Coefficient Distribution", X-label "Validation Coefficient (VC)", Y-label "Count"
+  - _Requirements: 1, 2, 3, 4_
+
+- [~] 8. Write property-based tests for ChartEngine in `tests/gui/test_charts_properties.py`
+  - Use `hypothesis` library with `settings(max_examples=100)` on each test
+  - **Property 1**: `@given` ranking_df with 1-20 rows → after `render_ranking_chart`, `len(ax.patches) == len(df)` — Feature: graphical-enhancements-and-export, Property 1: Bar count matches element count
+  - **Property 2**: `@given` ranking_df including ties → ytick labels match ascending sort of (Wins DESC, Total_Score DESC) — Feature: graphical-enhancements-and-export, Property 2: Bars are sorted by (Wins DESC, Total_Score DESC)
+  - **Property 3**: `@given` ranking_df → N text annotations on axes, each annotation string equals integer Wins of its element — Feature: graphical-enhancements-and-export, Property 3: Bar annotations match Wins values
+  - **Property 4**: `@given` integers(1, 30) → `get_bar_colours(n)[i] == ACCENT_CYCLE[i % len(ACCENT_CYCLE)]` for all i — Feature: graphical-enhancements-and-export, Property 4: Colour cycling is consistent for any element count
+  - **Property 5**: `@given` winner_lines_df with 1+ rows → `ax.get_ylim() == (0.0, 1.0)` after `render_score_scatter` — Feature: graphical-enhancements-and-export, Property 5: Score scatter Y-axis is always fixed to [0.0, 1.0]
+  - **Property 6**: `@given` winner_lines_df → legend handle count equals distinct Winning_Element count — Feature: graphical-enhancements-and-export, Property 6: Scatter legend has exactly one entry per distinct element
+  - **Property 7**: `@given` list of 1-50 floats in [0.0, 1.0] → rendered bar x-positions match TIER_BINS midpoints — Feature: graphical-enhancements-and-export, Property 7: VC histogram uses fixed tier bin boundaries
+  - **Property 8**: `@given` VC values covering all four tiers → bar facecolors match TIER_COLOURS in order — Feature: graphical-enhancements-and-export, Property 8: VC histogram bar colours match quality tiers
+  - **Property 9**: `@given` floats(0.0, 1.0, allow_nan=False) → `classify_vc` returns correct tier label and fg=='#FFFFFF' — Feature: graphical-enhancements-and-export, Property 9: VC classification is total and correct for all values in [0, 1]
+  - _Requirements: 1.2, 1.3, 1.5, 2.2, 2.3, 3.2, 3.3, 4.1, 4.2_
+
+- [~] 9. Write property-based and integration tests for ExportEngine in `tests/gui/test_export_engine_properties.py` and `tests/gui/test_export_engine_integration.py`
+  - **Property 10**: `@given` DataFrame with 1-20 cols and 1-50 rows → write CSV to tmp_path, re-read first row, assert equals `list(df.columns)` — Feature: graphical-enhancements-and-export, Property 10: CSV export header matches DataFrame columns
+  - **Property 11**: `@given` any Figure → `save_figure_png(fig, path)` produces file at path with size > 0 and figure facecolor was set to C_BG_DEEP — Feature: graphical-enhancements-and-export, Property 11: PNG export respects DPI and background colour
+  - **Property 12**: `@given` non-empty validation_results_df → `generate_pdf_report` flowables list contains cover Paragraph, parameters Table, summary Table, results Table, VC Image, wavelengths Paragraph in that order — Feature: graphical-enhancements-and-export, Property 12: PDF flowables include all required sections for any validation result
+  - Integration: `export_step4_csv` writes three files with correct names and headers in tmp_path
+  - Integration: `export_step5_csv` writes one file with header matching df.columns
+  - Integration: `generate_pdf_report` with non-empty df writes file starting with `%PDF-` and size > 1 KB
+  - Integration: `generate_pdf_report` with empty df writes file without crash
+  - Integration: `generate_pdf_report` with step4_results provided produces larger file than without
+  - _Requirements: 5.3, 5.4, 5.5, 6.3, 7.3, 7.5, 7.6, 7.7_
+
+- [~] 10. Write widget example tests in `tests/gui/test_widget_examples.py`
+  - Assert `self.tabs.tabText(i)` starts with "①", "②", "③", "④", "⑤" for i = 0..4
+  - Assert `step4_widget.export_csv_button.isEnabled() == False` on init
+  - Assert `step4_widget.export_png_button.isEnabled() == False` on init
+  - Assert `step5_widget.export_csv_button.isEnabled() == False` on init
+  - Assert `step5_widget.export_png_button.isEnabled() == False` on init
+  - Assert `step5_widget.export_pdf_button.isEnabled() == False` on init
+  - Assert `step4_widget.summary_banner.text() == "Run analysis to see summary"` on init
+  - Assert `step5_widget.summary_banner.text() == "Run validation to see summary"` on init
+  - Assert `step4_widget.primary_element_label.text() == "—"` on init
+  - Assert `step5_widget.mean_vc_label.text() == "—"` on init
+  - **Property 13**: `@given` analysis_results dicts → `_update_summary_banner` sets banner text containing primary element name, wins count, element count, peak count — Feature: graphical-enhancements-and-export, Property 13: Summary banner content reflects analysis results for any result set
+  - **Property 14**: `@given` floats(0.0, 1.0) → mean_vc_label stylesheet colour matches `classify_vc(mean_vc)[1]` — Feature: graphical-enhancements-and-export, Property 14: Mean VC label colour matches quality tier for any mean VC
+  - **Property 15**: two sequential analysis renders → `id(self.ranking_canvas)` unchanged between renders — Feature: graphical-enhancements-and-export, Property 15: Chart canvas identity is preserved across sequential renders
+  - **Property 16**: `@given` integers(1, 5) N → simulate N start/complete cycles, assert buttons disabled at each start and enabled after each success — Feature: graphical-enhancements-and-export, Property 16: Export buttons follow enabled/disabled cycle across any number of runs
+  - _Requirements: 8.1, 8.2, 8.3, 8.4, 9.3, 9.4, 10.1, 10.2, 10.5, 10.6_

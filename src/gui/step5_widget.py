@@ -13,9 +13,12 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QDoubleSpinBox,
-    QFileDialog, QSpinBox
+    QFileDialog, QSpinBox, QSplitter, QProgressBar, QScrollArea
 )
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QColor
+
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.figure import Figure
 
 from src import setup_logger
 from src.config import STEP5_PARAMS
@@ -25,7 +28,12 @@ from src.gui.gui_utils import (
     FileSelector, WorkerThread,
     show_error, show_info
 )
-from src.gui.theme import primary_button_style, instruction_banner_style, step_title_font
+from src.gui.charts import ChartEngine
+from src.gui.export_engine import export_step5_csv, export_step5_png, generate_pdf_report
+from src.gui.theme import (
+    primary_button_style, instruction_banner_style, step_title_font,
+    summary_banner_style, mean_vc_label_style, progress_bar_style
+)
 
 logger = setup_logger(__name__)
 
@@ -38,8 +46,9 @@ class Step5Widget(QWidget):
     - Load processed and reference spectra
     - Specify target wavelengths for validation
     - Calculate validation coefficients
-    - View correlation results
-    - Save validation report
+    - View correlation results with colour-coded quality badges
+    - View VC histogram chart
+    - Export results as CSV, PNG, or PDF
     """
     
     def __init__(self, file_history=None, notes_panel=None):
@@ -64,16 +73,61 @@ class Step5Widget(QWidget):
         
         logger.info("Initializing Step 5 widget")
         
+        # Create the VC histogram figure, canvas, and toolbar
+        self.vc_fig = Figure(figsize=(8, 3), dpi=100)
+        self.vc_canvas = FigureCanvasQTAgg(self.vc_fig)
+        self.vc_canvas.setMinimumHeight(180)
+        self.vc_canvas.setMinimumWidth(280)
+        self.vc_toolbar = NavigationToolbar2QT(self.vc_canvas)
+        
         main_layout = QVBoxLayout()
-        
-        # Top section (controls)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+        main_layout.setSpacing(0)
+
+        # ── Controls pane (scrollable) ────────────────────────────────────
+        controls_container = QWidget()
         controls_layout = self._create_controls()
-        main_layout.addLayout(controls_layout)
-        
-        # Results table
+        controls_container.setLayout(controls_layout)
+
+        controls_scroll = QScrollArea()
+        controls_scroll.setWidget(controls_container)
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        # ── Results table pane ────────────────────────────────────────────
         self.results_table = self._create_results_table()
-        main_layout.addWidget(self.results_table, stretch=1)
-        
+
+        # ── Chart pane ────────────────────────────────────────────────────
+        chart_widget = QWidget()
+        chart_layout = QVBoxLayout()
+        chart_layout.setContentsMargins(0, 0, 0, 0)
+        chart_layout.setSpacing(2)
+        chart_layout.addWidget(self.vc_canvas)
+        chart_layout.addWidget(self.vc_toolbar)
+        chart_widget.setLayout(chart_layout)
+
+        # ── 3-pane vertical splitter: controls | table | chart ────────────
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(controls_scroll)
+        splitter.addWidget(self.results_table)
+        splitter.addWidget(chart_widget)
+        # ~220px controls, ~360px table, ~200px chart (out of ~780px total)
+        splitter.setSizes([220, 360, 200])
+        splitter.setStretchFactor(0, 0)   # controls: stay compact
+        splitter.setStretchFactor(1, 3)   # table:    grows most
+        splitter.setStretchFactor(2, 1)   # chart:    grows some
+
+        main_layout.addWidget(splitter, stretch=1)
+
+        # ── Progress bar (hidden by default, sits below splitter) ─────────
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setStyleSheet(progress_bar_style())
+        self.progress_bar.setMaximumHeight(6)
+        self.progress_bar.hide()
+        main_layout.addWidget(self.progress_bar)
+
         self.setLayout(main_layout)
     
     def _create_controls(self) -> QVBoxLayout:
@@ -88,6 +142,15 @@ class Step5Widget(QWidget):
         title.setFont(title_font)
         title.setStyleSheet(step_title_font(13))
         layout.addWidget(title)
+
+        # Summary banner (after title, before instructions)
+        self.summary_banner = QLabel("Run validation to see summary")
+        self.summary_banner.setStyleSheet(summary_banner_style())
+        self.summary_banner.setWordWrap(True)
+        layout.addWidget(self.summary_banner)
+        
+        self.mean_vc_label = QLabel("—")
+        layout.addWidget(self.mean_vc_label)
 
         # Instructions
         instructions = QLabel(
@@ -104,8 +167,8 @@ class Step5Widget(QWidget):
             "   • Min Points: minimum data points required in each region (increase if validation fails).\n"
             "   • VC Threshold: validation coefficient ≥ this value is rated 'Good' (0–1 scale).\n"
             "5. Click 'Validate Spectrum' to compute Pearson correlation at each target line.\n"
-            "6. Results show the Validation Coefficient (VC) per line: Good ≥ 0.8, Fair ≥ 0.6, Poor < 0.6.\n"
-            "7. Click 'Save Report' to export the validation results as CSV."
+            "6. Results show the Validation Coefficient (VC) per line: colour-coded by quality tier.\n"
+            "7. Use the export buttons to save results as CSV, PNG, or PDF."
         )
         instructions.setWordWrap(True)
         instructions.setStyleSheet(instruction_banner_style())
@@ -203,6 +266,25 @@ class Step5Widget(QWidget):
         self.save_button.clicked.connect(self._on_save_clicked)
         buttons_layout.addWidget(self.save_button)
         
+        # Export buttons (disabled until data is available)
+        self.export_csv_button = QPushButton("Export CSV")
+        self.export_csv_button.setEnabled(False)
+        self.export_csv_button.setToolTip("No data — run analysis first")
+        self.export_csv_button.clicked.connect(self._on_export_csv_clicked)
+        buttons_layout.addWidget(self.export_csv_button)
+        
+        self.export_png_button = QPushButton("Export PNG")
+        self.export_png_button.setEnabled(False)
+        self.export_png_button.setToolTip("No data — run analysis first")
+        self.export_png_button.clicked.connect(self._on_export_png_clicked)
+        buttons_layout.addWidget(self.export_png_button)
+        
+        self.export_pdf_button = QPushButton("Export PDF Report")
+        self.export_pdf_button.setEnabled(False)
+        self.export_pdf_button.setToolTip("No data — run analysis first")
+        self.export_pdf_button.clicked.connect(self._on_export_pdf_clicked)
+        buttons_layout.addWidget(self.export_pdf_button)
+        
         # Info label
         self.info_label = QLabel("Ready to validate spectrum")
         self.info_label.setWordWrap(True)
@@ -294,6 +376,12 @@ class Step5Widget(QWidget):
         self.validate_button.setEnabled(False)
         self.save_button.setEnabled(False)
         
+        # Show progress bar and disable export buttons
+        self.progress_bar.show()
+        self.export_csv_button.setEnabled(False)
+        self.export_png_button.setEnabled(False)
+        self.export_pdf_button.setEnabled(False)
+        
         # Run validation in worker thread
         self.worker_thread = WorkerThread(
             self._validate_worker
@@ -334,6 +422,7 @@ class Step5Widget(QWidget):
     def _on_worker_error(self, error_message: str):
         """Handle worker thread unhandled exception."""
         self.validate_button.setEnabled(True)
+        self.progress_bar.hide()
         show_error("Validation Error", error_message)
         self.info_label.setText(f"Error: {error_message}")
 
@@ -345,6 +434,7 @@ class Step5Widget(QWidget):
         result = self.worker_thread.result
         if result is None:
             self.validate_button.setEnabled(True)
+            self.progress_bar.hide()
             show_error("Validation Failed", "Worker returned no result")
             return
 
@@ -352,6 +442,7 @@ class Step5Widget(QWidget):
         self.validate_button.setEnabled(True)
         
         if not success:
+            self.progress_bar.hide()
             show_error("Validation Failed", message)
             self.info_label.setText(f"Error: {message}")
             return
@@ -359,9 +450,19 @@ class Step5Widget(QWidget):
         # Update table
         self._populate_results_table()
         
+        # Update chart and summary banner
+        self._update_chart()
+        self._update_summary_banner(self.validation_results)
+        
+        # Enable export buttons and hide progress bar
+        self.export_csv_button.setEnabled(True)
+        self.export_png_button.setEnabled(True)
+        self.export_pdf_button.setEnabled(True)
+        self.progress_bar.hide()
+        
         self.save_button.setEnabled(True)
         
-        # Calculate statistics
+        # Calculate statistics for info label
         valid_vc = self.validation_results[
             self.validation_results['Validation_Coefficient'].notna()
         ]['Validation_Coefficient']
@@ -376,7 +477,7 @@ class Step5Widget(QWidget):
         logger.info("Validation finished successfully")
     
     def _populate_results_table(self):
-        """Populate results table."""
+        """Populate results table with colour-coded quality badges."""
         if self.validation_results is None:
             return
         
@@ -390,19 +491,167 @@ class Step5Widget(QWidget):
             vc_val = r_data['Validation_Coefficient']
             if pd.isna(vc_val):
                 vc_str = "N/A"
-                quality = "Failed"
             else:
                 vc_str = f"{vc_val:.4f}"
-                quality = "Good" if vc_val > 0.8 else "Fair" if vc_val > 0.6 else "Poor"
             
             self.results_table.setItem(row, 1, QTableWidgetItem(vc_str))
             self.results_table.setItem(row, 2, QTableWidgetItem(r_data['Status']))
-            self.results_table.setItem(row, 3, QTableWidgetItem(quality))
+            
+            # Use ChartEngine to classify the VC and colour the quality cell
+            tier_label, bg_hex, fg_hex = ChartEngine.classify_vc(vc_val)
+            quality_item = QTableWidgetItem(tier_label)
+            quality_item.setBackground(QColor(bg_hex))
+            quality_item.setForeground(QColor(fg_hex))
+            self.results_table.setItem(row, 3, quality_item)
         
         logger.info("Results table populated")
     
+    def _update_chart(self):
+        """Clear and redraw the VC histogram on the existing canvas."""
+        self.vc_fig.clear()
+        ax = self.vc_fig.add_subplot(111)
+        ChartEngine.render_vc_histogram(ax, self.validation_results)
+        self.vc_canvas.draw()
+        self.vc_toolbar.home()
+    
+    def _update_summary_banner(self, validation_results: pd.DataFrame):
+        """Update the summary banner and mean VC label with current results.
+        
+        Parameters
+        ----------
+        validation_results : pd.DataFrame
+            The validation results DataFrame with Validation_Coefficient column.
+        """
+        if validation_results is None or validation_results.empty:
+            self.summary_banner.setText("No results to summarise.")
+            self.mean_vc_label.setText("—")
+            return
+        
+        # Extract non-null VC values
+        valid_vc = validation_results['Validation_Coefficient'].dropna()
+        total_count = len(validation_results)
+        
+        if valid_vc.empty:
+            self.summary_banner.setText(
+                f"Total wavelengths: {total_count} | All validations failed (no VC values)"
+            )
+            self.mean_vc_label.setText("—")
+            return
+        
+        mean_vc = valid_vc.mean()
+        
+        # Count per tier
+        tier_counts: dict[str, int] = {}
+        for vc_val in validation_results['Validation_Coefficient']:
+            tier_label, _, _ = ChartEngine.classify_vc(vc_val)
+            tier_counts[tier_label] = tier_counts.get(tier_label, 0) + 1
+        
+        # Build summary text
+        tier_parts = []
+        for label in ["Excellent", "Good", "Moderate", "Weak", "Failed"]:
+            count = tier_counts.get(label, 0)
+            if count > 0:
+                tier_parts.append(f"{label}: {count}")
+        
+        tier_str = " | ".join(tier_parts)
+        banner_text = (
+            f"Mean VC: {mean_vc:.4f}  |  Total wavelengths: {total_count}  |  {tier_str}"
+        )
+        self.summary_banner.setText(banner_text)
+        
+        # Update mean VC label with tier colour
+        _, colour, _ = ChartEngine.classify_vc(mean_vc)
+        self.mean_vc_label.setStyleSheet(mean_vc_label_style(colour))
+        self.mean_vc_label.setText(f"{mean_vc:.4f}")
+    
+    def _on_export_csv_clicked(self):
+        """Export validation results to CSV."""
+        if self.validation_results is None:
+            show_error("Error", "No data to export")
+            return
+        
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Export CSV", "validation_results",
+            "CSV Files (*.csv)"
+        )
+        
+        if not filepath:
+            return
+        
+        try:
+            export_step5_csv(self.validation_results, Path(filepath))
+            show_info("Export Successful", f"CSV saved to:\n{filepath}")
+            logger.info(f"CSV exported to {filepath}")
+        except Exception as e:
+            logger.error(f"CSV export failed: {e}")
+            show_error("Export Failed", f"Failed to export CSV:\n{e}")
+    
+    def _on_export_png_clicked(self):
+        """Export the VC histogram chart as PNG."""
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Export PNG", "vc_histogram",
+            "PNG Files (*.png)"
+        )
+        
+        if not filepath:
+            return
+        
+        try:
+            export_step5_png(self.vc_fig, Path(filepath))
+            show_info("Export Successful", f"PNG saved to:\n{filepath}")
+            logger.info(f"PNG exported to {filepath}")
+        except Exception as e:
+            logger.error(f"PNG export failed: {e}")
+            show_error("Export Failed", f"Failed to export PNG:\n{e}")
+    
+    def _on_export_pdf_clicked(self):
+        """Generate and save a comprehensive PDF validation report."""
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Export PDF Report", "LIBS_Validation_Report",
+            "PDF Files (*.pdf)"
+        )
+        
+        if not filepath:
+            return
+        
+        # Gather parameters
+        params = {
+            'WINDOW': self.window_spinbox.value(),
+            'MIN_POINTS': self.min_points_spinbox.value(),
+            'VC_THRESHOLD': self.threshold_spinbox.value(),
+        }
+        
+        # Get filenames from selectors
+        processed_path = self.processed_selector.get_filepath()
+        reference_path = self.reference_selector.get_filepath()
+        processed_filename = Path(processed_path).name if processed_path else "Unknown"
+        reference_filename = Path(reference_path).name if reference_path else "Unknown"
+        
+        target_wavelengths = getattr(self, 'target_wavelengths', [])
+        
+        try:
+            generate_pdf_report(
+                validation_results_df=self.validation_results,
+                params=params,
+                vc_fig=self.vc_fig,
+                processed_filename=processed_filename,
+                reference_filename=reference_filename,
+                target_wavelengths=target_wavelengths,
+                filepath=Path(filepath),
+            )
+            show_info("Export Successful", f"PDF report saved to:\n{filepath}")
+            logger.info(f"PDF report exported to {filepath}")
+        except ImportError:
+            show_error(
+                "Missing Dependency",
+                "reportlab is not installed.\nRun: pip install reportlab"
+            )
+        except Exception as e:
+            logger.error(f"PDF export failed: {e}")
+            show_error("Export Failed", f"Failed to generate PDF report:\n{e}")
+    
     def _on_save_clicked(self):
-        """Save validation report."""
+        """Save validation report (legacy CSV save)."""
         if self.validation_results is None:
             show_error("Error", "No results to save")
             return

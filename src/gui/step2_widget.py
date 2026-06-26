@@ -11,7 +11,7 @@ import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
-    QTableWidget, QTableWidgetItem, QSplitter
+    QTableWidget, QTableWidgetItem, QSplitter, QScrollArea
 )
 from PyQt6.QtGui import QFont
 
@@ -64,9 +64,9 @@ class Step2Widget(QWidget):
         # Main layout
         main_layout = QHBoxLayout()
         
-        # Left panel (controls)
-        left_panel = self._create_left_panel()
-        main_layout.addWidget(left_panel, stretch=0)
+        # Left panel (controls) — _create_left_panel already returns a scroll area
+        left_scroll = self._create_left_panel()
+        main_layout.addWidget(left_scroll, stretch=0)
         
         # Right panel (visualization)
         right_panel = self._create_right_panel()
@@ -173,7 +173,15 @@ class Step2Widget(QWidget):
         layout.addStretch()
         panel.setLayout(layout)
         panel.setMaximumWidth(350)
-        return panel
+
+        # Wrap in scroll area for small screens
+        scroll = QScrollArea()
+        scroll.setWidget(panel)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setMaximumWidth(370)
+        return scroll
     
     def _create_right_panel(self) -> QWidget:
         """Create right visualization panel."""
@@ -197,10 +205,9 @@ class Step2Widget(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["Wavelength (nm)", "Intensity"])
-        self.table.setMaximumHeight(200)
         splitter.addWidget(self.table)
         
-        splitter.setSizes([600, 200])
+        splitter.setSizes([500, 250])
         layout.addWidget(splitter)
         
         panel.setLayout(layout)

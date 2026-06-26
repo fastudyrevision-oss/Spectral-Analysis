@@ -12,9 +12,11 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget,
-    QFileDialog, QMessageBox
+    QFileDialog, QMessageBox, QSplitter, QProgressBar, QScrollArea
 )
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QColor
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.figure import Figure
 
 from src import setup_logger
 from src.config import STEP4_PARAMS
@@ -23,7 +25,12 @@ from src.gui.gui_utils import (
     FileSelector, WorkerThread,
     show_error, show_info
 )
-from src.gui.theme import primary_button_style, instruction_banner_style, step_title_font
+from src.gui.theme import (
+    primary_button_style, instruction_banner_style, step_title_font,
+    summary_banner_style, primary_element_label_style, progress_bar_style
+)
+from src.gui.charts import ChartEngine
+from src.gui.export_engine import export_step4_csv, export_step4_png
 
 logger = setup_logger(__name__)
 
@@ -60,25 +67,85 @@ class Step4Widget(QWidget):
         self.notes_panel = notes_panel
         
         logger.info("Initializing Step 4 widget")
-        
+
+        # --- Chart figures and canvases ------------------------------------
+        self.ranking_fig = Figure(figsize=(6, 3), dpi=100)
+        self.ranking_canvas = FigureCanvasQTAgg(self.ranking_fig)
+        self.ranking_toolbar = NavigationToolbar2QT(self.ranking_canvas)
+        # Charts figure minimum size — smaller so table gets more room
+        self.ranking_canvas.setMinimumHeight(180)
+        self.ranking_canvas.setMinimumWidth(260)
+
+        self.scatter_fig = Figure(figsize=(6, 3), dpi=100)
+        self.scatter_canvas = FigureCanvasQTAgg(self.scatter_fig)
+        self.scatter_toolbar = NavigationToolbar2QT(self.scatter_canvas)
+        self.scatter_canvas.setMinimumHeight(180)
+        self.scatter_canvas.setMinimumWidth(260)
+
         main_layout = QVBoxLayout()
-        
-        # Top section (controls)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+        main_layout.setSpacing(0)
+
+        # Controls in a scroll area
+        controls_container = QWidget()
         controls_layout = self._create_controls()
-        main_layout.addLayout(controls_layout)
-        
+        controls_container.setLayout(controls_layout)
+
+        controls_scroll = QScrollArea()
+        controls_scroll.setWidget(controls_container)
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        # No fixed max-height — splitter handles it
+
         # Results tabs
         self.results_tabs = QTabWidget()
         self.competition_table = self._create_results_table()
         self.ranking_table = self._create_ranking_table()
         self.winners_table = self._create_winners_table()
-        
+
         self.results_tabs.addTab(self.ranking_table, "Element Ranking")
         self.results_tabs.addTab(self.competition_table, "Peak Competition")
         self.results_tabs.addTab(self.winners_table, "Winner Lines")
-        
-        main_layout.addWidget(self.results_tabs, stretch=1)
-        
+
+        # Charts panel (side-by-side)
+        charts_widget = QWidget()
+        charts_h_layout = QHBoxLayout()
+        charts_h_layout.setContentsMargins(4, 4, 4, 4)
+        charts_h_layout.setSpacing(8)
+
+        left_panel = QWidget()
+        left_layout = QVBoxLayout()
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(2)
+        left_layout.addWidget(self.ranking_canvas)
+        left_layout.addWidget(self.ranking_toolbar)
+        left_panel.setLayout(left_layout)
+
+        right_panel = QWidget()
+        right_layout = QVBoxLayout()
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(2)
+        right_layout.addWidget(self.scatter_canvas)
+        right_layout.addWidget(self.scatter_toolbar)
+        right_panel.setLayout(right_layout)
+
+        charts_h_layout.addWidget(left_panel)
+        charts_h_layout.addWidget(right_panel)
+        charts_widget.setLayout(charts_h_layout)
+
+        # 3-pane vertical splitter: controls (small) | tables (large) | charts (medium)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(controls_scroll)
+        splitter.addWidget(self.results_tabs)
+        splitter.addWidget(charts_widget)
+        # ~180px controls, ~380px tables, ~220px charts out of ~780px total
+        splitter.setSizes([180, 380, 220])
+        splitter.setStretchFactor(0, 0)   # controls: don't grow
+        splitter.setStretchFactor(1, 3)   # tables:   grow most
+        splitter.setStretchFactor(2, 1)   # charts:   grow some
+
+        main_layout.addWidget(splitter, stretch=1)
         self.setLayout(main_layout)
     
     def _create_controls(self) -> QVBoxLayout:
@@ -103,7 +170,18 @@ class Step4Widget(QWidget):
         instructions.setWordWrap(True)
         instructions.setStyleSheet(instruction_banner_style())
         layout.addWidget(instructions)
-        
+
+        # Summary banner
+        self.summary_banner = QLabel("Run analysis to see summary")
+        self.summary_banner.setWordWrap(True)
+        self.summary_banner.setStyleSheet(summary_banner_style())
+        layout.addWidget(self.summary_banner)
+
+        # Primary element label
+        self.primary_element_label = QLabel("—")
+        self.primary_element_label.setStyleSheet(primary_element_label_style())
+        layout.addWidget(self.primary_element_label)
+
         # Files section
         files_group = QGroupBox("Matching Files")
         files_layout = QHBoxLayout()
@@ -134,13 +212,33 @@ class Step4Widget(QWidget):
         self.save_button.setEnabled(False)
         self.save_button.clicked.connect(self._on_save_clicked)
         buttons_layout.addWidget(self.save_button)
-        
+
+        self.export_csv_button = QPushButton("Export CSV")
+        self.export_csv_button.setEnabled(False)
+        self.export_csv_button.setToolTip("No data — run analysis first")
+        self.export_csv_button.clicked.connect(self._on_export_csv_clicked)
+        buttons_layout.addWidget(self.export_csv_button)
+
+        self.export_png_button = QPushButton("Export PNG")
+        self.export_png_button.setEnabled(False)
+        self.export_png_button.setToolTip("No data — run analysis first")
+        self.export_png_button.clicked.connect(self._on_export_png_clicked)
+        buttons_layout.addWidget(self.export_png_button)
+
         # Info label
         self.info_label = QLabel("Select matching files to begin analysis")
         self.info_label.setWordWrap(True)
         buttons_layout.addWidget(self.info_label)
         
         layout.addLayout(buttons_layout)
+
+        # Progress bar (indeterminate, hidden by default)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setStyleSheet(progress_bar_style())
+        self.progress_bar.setMaximumHeight(8)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
         
         return layout
     
@@ -225,6 +323,11 @@ class Step4Widget(QWidget):
         self.info_label.setText("Loading files...")
         self.analyze_button.setEnabled(False)
         self.save_button.setEnabled(False)
+
+        # Show progress bar and disable export buttons while running
+        self.progress_bar.show()
+        self.export_csv_button.setEnabled(False)
+        self.export_png_button.setEnabled(False)
         
         # Run analysis in worker thread
         self.worker_thread = WorkerThread(
@@ -267,6 +370,7 @@ class Step4Widget(QWidget):
     def _on_worker_error(self, error_message: str):
         """Handle worker thread unhandled exception."""
         self.analyze_button.setEnabled(True)
+        self.progress_bar.hide()
         show_error("Analysis Error", error_message)
         self.info_label.setText(f"Error: {error_message}")
 
@@ -278,6 +382,7 @@ class Step4Widget(QWidget):
         result = self.worker_thread.result
         if result is None:
             self.analyze_button.setEnabled(True)
+            self.progress_bar.hide()
             show_error("Analysis Failed", "Worker returned no result")
             return
 
@@ -285,6 +390,7 @@ class Step4Widget(QWidget):
         self.analyze_button.setEnabled(True)
         
         if not success:
+            self.progress_bar.hide()
             show_error("Analysis Failed", message)
             self.info_label.setText(f"Error: {message}")
             if self.notes_panel:
@@ -293,6 +399,17 @@ class Step4Widget(QWidget):
         
         # Update tables
         self._populate_tables()
+
+        # Update charts and summary banner
+        self._update_charts()
+        self._update_summary_banner(self.analysis_results)
+
+        # Enable export buttons
+        self.export_csv_button.setEnabled(True)
+        self.export_png_button.setEnabled(True)
+
+        # Hide progress bar
+        self.progress_bar.hide()
 
         # Update notes panel (GUI thread — safe)
         if self.notes_panel:
@@ -346,7 +463,104 @@ class Step4Widget(QWidget):
             self.competition_table.setItem(row, 3, QTableWidgetItem(str(int(c_data['Num_Competitors']))))
         
         logger.info("Tables populated with analysis results")
-    
+
+    def _update_charts(self):
+        """Clear and redraw ranking and scatter charts from current analysis_results."""
+        if self.analysis_results is None:
+            return
+
+        ranking_df = self.analysis_results.get('ranking')
+        winner_lines_df = self.analysis_results.get('winner_lines')
+
+        # Ranking chart
+        self.ranking_fig.clear()
+        ax_ranking = self.ranking_fig.add_subplot(111)
+        ChartEngine.render_ranking_chart(ax_ranking, ranking_df)
+        self.ranking_canvas.draw()
+        self.ranking_toolbar.home()
+
+        # Scatter chart
+        self.scatter_fig.clear()
+        ax_scatter = self.scatter_fig.add_subplot(111)
+        ChartEngine.render_score_scatter(ax_scatter, winner_lines_df)
+        self.scatter_canvas.draw()
+        self.scatter_toolbar.home()
+
+    def _update_summary_banner(self, analysis_results):
+        """Update the summary banner and primary element label from analysis_results."""
+        if analysis_results is None:
+            self.summary_banner.setText("Run analysis to see summary")
+            self.primary_element_label.setText("—")
+            return
+
+        ranking_df = analysis_results.get('ranking')
+        competition_df = analysis_results.get('competition')
+
+        if ranking_df is None or ranking_df.empty:
+            self.summary_banner.setText("No ranking data available")
+            self.primary_element_label.setText("—")
+            return
+
+        # Extract primary element info from the top-ranked row
+        top_row = ranking_df.iloc[0]
+        primary_element = str(top_row.get('Element', '—'))
+        wins = int(top_row.get('Wins', 0))
+        total_elements = len(ranking_df)
+        total_peaks = len(competition_df) if competition_df is not None else 0
+
+        banner_text = (
+            f"Primary element: <b>{primary_element}</b> "
+            f"({wins} wins)  |  "
+            f"Elements analysed: <b>{total_elements}</b>  |  "
+            f"Peaks analysed: <b>{total_peaks}</b>"
+        )
+        self.summary_banner.setText(banner_text)
+        self.primary_element_label.setText(primary_element)
+
+    def _on_export_csv_clicked(self):
+        """Export Step 4 results to CSV files in a selected directory."""
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select Export Directory", ""
+        )
+        if not directory:
+            return
+
+        try:
+            ranking_df = self.analysis_results['ranking']
+            winner_lines_df = self.analysis_results['winner_lines']
+            competition_df = self.analysis_results['competition']
+
+            written_paths = export_step4_csv(
+                ranking_df, winner_lines_df, competition_df, Path(directory)
+            )
+            paths_text = "\n".join(str(p) for p in written_paths)
+            show_info("Export Successful", f"CSV files saved:\n{paths_text}")
+            logger.info(f"Step 4 CSV exported to {directory}")
+
+        except Exception as e:
+            logger.error(f"CSV export failed: {e}")
+            show_error("Export Failed", f"Failed to export CSV:\n{e}")
+
+    def _on_export_png_clicked(self):
+        """Export Step 4 charts to PNG files in a selected directory."""
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select Export Directory", ""
+        )
+        if not directory:
+            return
+
+        try:
+            written_paths = export_step4_png(
+                self.ranking_fig, self.scatter_fig, Path(directory)
+            )
+            paths_text = "\n".join(str(p) for p in written_paths)
+            show_info("Export Successful", f"PNG files saved:\n{paths_text}")
+            logger.info(f"Step 4 PNG exported to {directory}")
+
+        except Exception as e:
+            logger.error(f"PNG export failed: {e}")
+            show_error("Export Failed", f"Failed to export PNG:\n{e}")
+
     def _on_save_clicked(self):
         """Save analysis results."""
         if self.analysis_results is None:

@@ -321,45 +321,71 @@ QPlainTextEdit {{
 =================================================================== */
 
 QScrollBar:vertical {{
-    background-color: {C_BG_PANEL};
-    width: 8px;
+    background-color: #0A0D14;
+    width: 12px;
     margin: 0;
-    border-radius: 4px;
+    border-radius: 6px;
+    border: 1px solid #252840;
 }}
 
 QScrollBar::handle:vertical {{
-    background-color: {C_BORDER};
-    border-radius: 4px;
-    min-height: 30px;
+    background-color: #6B7DB5;
+    border-radius: 5px;
+    min-height: 40px;
+    margin: 2px;
+    border: 1px solid #8090CC;
 }}
 
 QScrollBar::handle:vertical:hover {{
-    background-color: {C_TEXT_MUTED};
+    background-color: {C_ACCENT};
+    border: 1px solid #7EC0FF;
+}}
+
+QScrollBar::handle:vertical:pressed {{
+    background-color: #2E74CC;
+    border: 1px solid {C_ACCENT};
 }}
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0px;
 }}
 
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: #0A0D14;
+}}
+
 QScrollBar:horizontal {{
-    background-color: {C_BG_PANEL};
-    height: 8px;
+    background-color: #0A0D14;
+    height: 12px;
     margin: 0;
-    border-radius: 4px;
+    border-radius: 6px;
+    border: 1px solid #252840;
 }}
 
 QScrollBar::handle:horizontal {{
-    background-color: {C_BORDER};
-    border-radius: 4px;
-    min-width: 30px;
+    background-color: #6B7DB5;
+    border-radius: 5px;
+    min-width: 40px;
+    margin: 2px;
+    border: 1px solid #8090CC;
 }}
 
 QScrollBar::handle:horizontal:hover {{
-    background-color: {C_TEXT_MUTED};
+    background-color: {C_ACCENT};
+    border: 1px solid #7EC0FF;
+}}
+
+QScrollBar::handle:horizontal:pressed {{
+    background-color: #2E74CC;
+    border: 1px solid {C_ACCENT};
 }}
 
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
     width: 0px;
+}}
+
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+    background: #0A0D14;
 }}
 
 /* ===================================================================
@@ -367,15 +393,33 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
 =================================================================== */
 
 QSplitter::handle {{
-    background-color: {C_BORDER};
+    background-color: #252840;
 }}
 
 QSplitter::handle:horizontal {{
-    width: 2px;
+    width: 5px;
+    background-color: #1A1E35;
+    border-left: 2px solid #4A9EFF;
+    border-right: 2px solid #4A9EFF;
+}}
+
+QSplitter::handle:horizontal:hover {{
+    background-color: {C_ACCENT};
+    border-left: 2px solid #7EC0FF;
+    border-right: 2px solid #7EC0FF;
 }}
 
 QSplitter::handle:vertical {{
-    height: 2px;
+    height: 5px;
+    background-color: #1A1E35;
+    border-top: 2px solid #4A9EFF;
+    border-bottom: 2px solid #4A9EFF;
+}}
+
+QSplitter::handle:vertical:hover {{
+    background-color: {C_ACCENT};
+    border-top: 2px solid #7EC0FF;
+    border-bottom: 2px solid #7EC0FF;
 }}
 
 /* ===================================================================
@@ -479,5 +523,58 @@ def step_title_font(size: int = 13) -> str:
         f"  font-size: {size}pt;"
         f"  font-weight: 700;"
         f"  letter-spacing: 0.5px;"
+        f"}}"
+    )
+
+
+def summary_banner_style() -> str:
+    """Return inline style for the summary statistics banner QLabel."""
+    return (
+        f"QLabel {{"
+        f"  background-color: #151B2E;"
+        f"  color: {C_TEXT2};"
+        f"  border-left: 4px solid {C_ACCENT2};"
+        f"  padding: 10px;"
+        f"}}"
+    )
+
+
+def primary_element_label_style() -> str:
+    """Return inline style for the primary element name label (bold, 14pt, C_ACCENT2)."""
+    return (
+        f"QLabel {{"
+        f"  background-color: transparent;"
+        f"  color: {C_ACCENT2};"
+        f"  font-size: 14pt;"
+        f"  font-weight: 700;"
+        f"}}"
+    )
+
+
+def mean_vc_label_style(colour: str) -> str:
+    """Return inline style for the mean VC label (bold, 14pt, caller-supplied colour)."""
+    return (
+        f"QLabel {{"
+        f"  background-color: transparent;"
+        f"  color: {colour};"
+        f"  font-size: 14pt;"
+        f"  font-weight: 700;"
+        f"}}"
+    )
+
+
+def progress_bar_style() -> str:
+    """Return inline style for an indeterminate QProgressBar (thin bar, no text)."""
+    return (
+        f"QProgressBar {{"
+        f"  background-color: {C_BG_INPUT};"
+        f"  border: none;"
+        f"  border-radius: 3px;"
+        f"  height: 6px;"
+        f"  text-align: center;"
+        f"}}"
+        f"QProgressBar::chunk {{"
+        f"  background-color: {C_ACCENT};"
+        f"  border-radius: 3px;"
         f"}}"
     )
