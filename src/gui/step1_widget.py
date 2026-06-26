@@ -348,23 +348,41 @@ class Step1Widget(QWidget):
             self.table.setItem(i, 4, QTableWidgetItem(f"{corrected:.6g}"))
     
     def _on_save_clicked(self):
-        """Save processed results to file."""
+        """Save processed spectrum — user picks a directory, filenames get a timestamp."""
         if self.processed_data is None:
             show_error("Error", "No processed data to save")
             return
-        
+
+        from PyQt6.QtWidgets import QFileDialog
+        from datetime import datetime
+
+        save_dir = QFileDialog.getExistingDirectory(
+            self, "Select Save Directory", str(Path.home())
+        )
+        if not save_dir:
+            return  # user cancelled
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_name  = f"SG_ALS_LIBS_processed_{ts}.csv"
+        plot_name = f"SG_ALS_LIBS_processed_{ts}.png"
+        csv_path_str  = str(Path(save_dir) / csv_name)
+        plot_path_str = str(Path(save_dir) / plot_name)
+
         try:
             writer = CSVWriter()
-            csv_path = writer.write_processed_spectra("SG_ALS_LIBS_processed.csv", self.processed_data)
+            csv_path = writer.write_processed_spectra(csv_path_str, self.processed_data)
             logger.info(f"Saved processed spectra to {csv_path}")
-            
-            # Generate plot
+
             plot_gen = PlotGenerator()
-            plot_path = plot_gen.plot_step1_baseline(self.processed_data, "SG_ALS_LIBS_processed.png")
+            plot_path = plot_gen.plot_step1_baseline(self.processed_data, plot_path_str)
             logger.info(f"Saved baseline plot to {plot_path}")
-            
-            show_info("Success", f"Results saved:\n- {csv_path}\n- {plot_path}")
-            
+
+            show_info(
+                "Saved",
+                f"Files saved to:\n{save_dir}\n\n"
+                f"  {csv_name}\n  {plot_name}"
+            )
+
         except Exception as e:
             logger.error(f"Failed to save results: {e}")
             show_error("Error", f"Failed to save results:\n{e}")

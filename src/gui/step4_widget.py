@@ -70,14 +70,17 @@ class Step4Widget(QWidget):
 
         # --- Chart figures and canvases ------------------------------------
         self.ranking_fig = Figure(figsize=(6, 3), dpi=100)
+        self.ranking_fig.patch.set_facecolor("#141519")
         self.ranking_canvas = FigureCanvasQTAgg(self.ranking_fig)
+        self.ranking_canvas.setStyleSheet("background-color: #141519;")
         self.ranking_toolbar = NavigationToolbar2QT(self.ranking_canvas)
-        # Charts figure minimum size — smaller so table gets more room
         self.ranking_canvas.setMinimumHeight(180)
         self.ranking_canvas.setMinimumWidth(260)
 
         self.scatter_fig = Figure(figsize=(6, 3), dpi=100)
+        self.scatter_fig.patch.set_facecolor("#141519")
         self.scatter_canvas = FigureCanvasQTAgg(self.scatter_fig)
+        self.scatter_canvas.setStyleSheet("background-color: #141519;")
         self.scatter_toolbar = NavigationToolbar2QT(self.scatter_canvas)
         self.scatter_canvas.setMinimumHeight(180)
         self.scatter_canvas.setMinimumWidth(260)

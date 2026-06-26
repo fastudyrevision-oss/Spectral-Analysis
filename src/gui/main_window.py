@@ -99,13 +99,14 @@ class SpectralAnalysisApp(QMainWindow):
 
     def _on_tab_changed(self, index: int):
         """Refresh summary dashboard when its tab is activated."""
+        # ASCII-safe names for logging (console may be CP-1252)
         tab_names = [
-            "① Step 1: Baseline Correction",
-            "② Step 2: Peak Detection",
-            "③ Step 3: Element Identification",
-            "④ Step 4: Elemental Preferences",
-            "⑤ Step 5: Validation",
-            "📊 Analysis Summary",
+            "Step 1: Baseline Correction",
+            "Step 2: Peak Detection",
+            "Step 3: Element Identification",
+            "Step 4: Elemental Preferences",
+            "Step 5: Validation",
+            "Analysis Summary",
         ]
         if index < len(tab_names):
             logger.info(f"Switched to: {tab_names[index]}")

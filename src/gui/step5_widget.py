@@ -75,7 +75,9 @@ class Step5Widget(QWidget):
         
         # Create the VC histogram figure, canvas, and toolbar
         self.vc_fig = Figure(figsize=(8, 3), dpi=100)
+        self.vc_fig.patch.set_facecolor("#141519")
         self.vc_canvas = FigureCanvasQTAgg(self.vc_fig)
+        self.vc_canvas.setStyleSheet("background-color: #141519;")
         self.vc_canvas.setMinimumHeight(180)
         self.vc_canvas.setMinimumWidth(280)
         self.vc_toolbar = NavigationToolbar2QT(self.vc_canvas)

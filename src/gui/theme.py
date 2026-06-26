@@ -1,62 +1,84 @@
 # -*- coding: utf-8 -*-
 """
 Application Theme — Spectral Analysis Software
+Professional Scientific Dark Theme
 
-Central stylesheet for the entire application.
-All visual styling lives here. No logic is changed anywhere else.
+Design language: clean, high-information-density, precision-focused.
+Comparable to OriginPro / MATLAB dark mode.
 
-Colour palette (dark professional / scientific):
-  Background (deep)  : #0F1117
-  Background (panel) : #1A1D27
-  Background (card)  : #222536
-  Background (input) : #2A2D3E
-  Border             : #3A3D52
-  Accent blue        : #4A9EFF   (primary actions)
-  Accent teal        : #2DD4BF   (success / highlights)
-  Accent amber       : #F59E0B   (warnings)
-  Accent red         : #EF4444   (errors)
-  Text primary       : #E8EAF0
-  Text secondary     : #8B90A4
-  Text muted         : #555970
+Palette
+-------
+  Background (base)    : #1E1F26
+  Background (panel)   : #262A36
+  Background (raised)  : #2F3443
+  Background (input)   : #323849
+  Border (subtle)      : #3A4055
+  Border (focus)       : #3FA9F5
+  Accent blue          : #3FA9F5
+  Accent teal          : #3DDC97
+  Warning amber        : #F4B942
+  Danger red           : #E85D75
+  Text primary         : #F0F2F5
+  Text secondary       : #AEB7C4
+  Text muted           : #6B7589
+  Hover overlay        : rgba(63,169,245,0.08)
+  Pressed overlay      : rgba(63,169,245,0.18)
+  Tab active bg        : #2F3443
+  Tab inactive bg      : #1E1F26
 """
 
-# --------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 # Typography
-# --------------------------------------------------------------------------
-FONT_FAMILY_UI   = "Segoe UI"      # primary UI font (ships with Windows 10/11)
-FONT_FAMILY_MONO = "Consolas"      # monospace (logs, tables)
-FONT_SIZE_BASE   = 10              # pt — base body size
+# ──────────────────────────────────────────────────────────────────────────────
+FONT_FAMILY_UI   = "Segoe UI"
+FONT_FAMILY_MONO = "Consolas"
+FONT_SIZE_BASE   = 10
 
-# --------------------------------------------------------------------------
-# Palette constants (referenced in the stylesheet below)
-# --------------------------------------------------------------------------
-C_BG_DEEP    = "#0F1117"
-C_BG_PANEL   = "#1A1D27"
-C_BG_CARD    = "#222536"
-C_BG_INPUT   = "#2A2D3E"
-C_BORDER     = "#3A3D52"
-C_BORDER_FOCUS = "#4A9EFF"
-C_ACCENT     = "#4A9EFF"
-C_ACCENT2    = "#2DD4BF"
-C_WARN       = "#F59E0B"
-C_ERROR      = "#EF4444"
-C_SUCCESS    = "#22C55E"
-C_TEXT       = "#E8EAF0"
-C_TEXT2      = "#8B90A4"
-C_TEXT_MUTED = "#555970"
-C_HOVER      = "#2E3348"
-C_PRESSED    = "#1E2135"
-C_TAB_ACTIVE = "#222536"
-C_TAB_INACTIVE = "#1A1D27"
+# ──────────────────────────────────────────────────────────────────────────────
+# Palette constants
+# ──────────────────────────────────────────────────────────────────────────────
+C_BG_BASE    = "#1E1F26"
+C_BG_PANEL   = "#262A36"
+C_BG_RAISED  = "#2F3443"
+C_BG_INPUT   = "#323849"
+C_BG_DEEP    = "#141519"   # deepest — used for chart backgrounds, status bar
+C_BG_CARD    = "#2F3443"   # alias for raised panels
 
-# --------------------------------------------------------------------------
+C_BORDER     = "#3A4055"
+C_BORDER_FOCUS = "#3FA9F5"
+C_BORDER_SUBTLE = "#2E3348"
+
+C_ACCENT     = "#3FA9F5"   # primary blue
+C_ACCENT2    = "#3DDC97"   # teal / success
+C_WARN       = "#F4B942"
+C_ERROR      = "#E85D75"
+C_SUCCESS    = "#3DDC97"
+
+C_TEXT       = "#F0F2F5"
+C_TEXT2      = "#AEB7C4"
+C_TEXT_MUTED = "#6B7589"
+
+C_HOVER      = "rgba(63,169,245,0.08)"
+C_PRESSED    = "rgba(63,169,245,0.18)"
+C_ROW_ALT    = "#2A2F3E"
+C_ROW_HOVER  = "#374060"
+C_SELECTION  = "#3FA9F5"
+
+C_TAB_ACTIVE   = "#2F3443"
+C_TAB_INACTIVE = "#1E1F26"
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Full application stylesheet
-# --------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 APP_STYLESHEET = f"""
 
-/* ===================================================================
-   GLOBAL
-=================================================================== */
+/* ═══════════════════════════════════════════════════════════════════════
+   GLOBAL RESET
+═══════════════════════════════════════════════════════════════════════ */
+
+* {{
+    outline: none;
+}}
 
 QWidget {{
     background-color: {C_BG_PANEL};
@@ -68,113 +90,115 @@ QWidget {{
 }}
 
 QMainWindow {{
-    background-color: {C_BG_DEEP};
+    background-color: {C_BG_BASE};
 }}
 
-/* ===================================================================
-   TABS
-=================================================================== */
+/* ═══════════════════════════════════════════════════════════════════════
+   TABS  —  active step must be immediately obvious
+═══════════════════════════════════════════════════════════════════════ */
 
 QTabWidget::pane {{
     background-color: {C_BG_PANEL};
-    border: 1px solid {C_BORDER};
-    border-top: 2px solid {C_ACCENT};
-    border-radius: 0px 4px 4px 4px;
+    border: none;
+    border-top: 2px solid {C_BORDER};
 }}
 
 QTabBar {{
-    background-color: transparent;
+    background-color: {C_BG_BASE};
     qproperty-drawBase: 0;
 }}
 
 QTabBar::tab {{
     background-color: {C_TAB_INACTIVE};
-    color: {C_TEXT2};
-    border: 1px solid {C_BORDER};
-    border-bottom: none;
-    padding: 8px 18px;
-    margin-right: 2px;
-    border-radius: 4px 4px 0px 0px;
+    color: {C_TEXT_MUTED};
+    border: none;
+    border-bottom: 3px solid transparent;
+    padding: 9px 20px 8px 20px;
+    margin-right: 1px;
     font-weight: 500;
     font-size: 9pt;
-    min-width: 140px;
+    min-width: 130px;
 }}
 
 QTabBar::tab:selected {{
     background-color: {C_TAB_ACTIVE};
     color: {C_ACCENT};
-    border-top: 2px solid {C_ACCENT};
+    border-bottom: 3px solid {C_ACCENT};
     font-weight: 700;
+    font-size: 9pt;
 }}
 
 QTabBar::tab:hover:!selected {{
-    background-color: {C_HOVER};
-    color: {C_TEXT};
+    background-color: {C_BG_RAISED};
+    color: {C_TEXT2};
+    border-bottom: 3px solid {C_BORDER};
 }}
 
-/* ===================================================================
-   GROUP BOXES
-=================================================================== */
+/* ═══════════════════════════════════════════════════════════════════════
+   GROUP BOXES  —  reduced borders, elevated background
+═══════════════════════════════════════════════════════════════════════ */
 
 QGroupBox {{
-    background-color: {C_BG_CARD};
-    border: 1px solid {C_BORDER};
-    border-radius: 6px;
-    margin-top: 14px;
-    padding: 10px 8px 8px 8px;
+    background-color: {C_BG_RAISED};
+    border: 1px solid {C_BORDER_SUBTLE};
+    border-radius: 7px;
+    margin-top: 16px;
+    padding: 10px 10px 10px 10px;
     font-weight: 600;
-    font-size: 9pt;
+    font-size: 8pt;
     color: {C_TEXT2};
 }}
 
 QGroupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    padding: 0 8px;
-    left: 12px;
+    padding: 2px 10px;
+    left: 14px;
+    top: -1px;
     color: {C_ACCENT2};
     font-weight: 700;
-    font-size: 9pt;
-    letter-spacing: 0.5px;
+    font-size: 8pt;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    background-color: transparent;
 }}
 
-/* ===================================================================
+/* ═══════════════════════════════════════════════════════════════════════
    BUTTONS
-=================================================================== */
+═══════════════════════════════════════════════════════════════════════ */
 
 QPushButton {{
     background-color: {C_BG_INPUT};
-    color: {C_TEXT};
+    color: {C_TEXT2};
     border: 1px solid {C_BORDER};
-    border-radius: 5px;
-    padding: 6px 16px;
+    border-radius: 6px;
+    padding: 6px 18px;
     font-weight: 600;
     font-size: 9pt;
-    outline: none;
+    min-height: 28px;
 }}
 
 QPushButton:hover {{
-    background-color: {C_HOVER};
+    background-color: {C_BG_RAISED};
+    border-color: {C_ACCENT};
+    color: {C_TEXT};
+}}
+
+QPushButton:pressed {{
+    background-color: {C_BG_BASE};
     border-color: {C_ACCENT};
     color: {C_ACCENT};
 }}
 
-QPushButton:pressed {{
-    background-color: {C_PRESSED};
-    border-color: {C_ACCENT};
-}}
-
 QPushButton:disabled {{
-    background-color: {C_BG_CARD};
+    background-color: {C_BG_RAISED};
     color: {C_TEXT_MUTED};
-    border-color: {C_BORDER};
+    border-color: {C_BORDER_SUBTLE};
 }}
 
-/* Primary action button — keep the per-widget inline style as override */
-
-/* ===================================================================
+/* ═══════════════════════════════════════════════════════════════════════
    LABELS
-=================================================================== */
+═══════════════════════════════════════════════════════════════════════ */
 
 QLabel {{
     background-color: transparent;
@@ -182,60 +206,66 @@ QLabel {{
     font-size: {FONT_SIZE_BASE}pt;
 }}
 
-/* ===================================================================
-   LINE EDIT / SPIN BOX / COMBO BOX
-=================================================================== */
+/* ═══════════════════════════════════════════════════════════════════════
+   INPUTS — line edit, spinbox, combo
+═══════════════════════════════════════════════════════════════════════ */
 
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
     background-color: {C_BG_INPUT};
     color: {C_TEXT};
     border: 1px solid {C_BORDER};
-    border-radius: 4px;
-    padding: 4px 8px;
+    border-radius: 5px;
+    padding: 4px 10px;
     font-size: 9pt;
+    min-height: 26px;
     selection-background-color: {C_ACCENT};
 }}
 
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
     border: 1px solid {C_BORDER_FOCUS};
-    background-color: {C_BG_INPUT};
+    background-color: {C_BG_RAISED};
 }}
 
 QSpinBox::up-button, QDoubleSpinBox::up-button,
 QSpinBox::down-button, QDoubleSpinBox::down-button {{
-    background-color: {C_BG_CARD};
+    background-color: transparent;
     border: none;
-    width: 16px;
+    width: 18px;
+    subcontrol-origin: border;
 }}
 
 QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
 QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
-    background-color: {C_HOVER};
+    background-color: {C_BG_RAISED};
+    border-radius: 3px;
 }}
 
 QComboBox::drop-down {{
     border: none;
-    width: 20px;
+    width: 22px;
+    padding-right: 4px;
 }}
 
 QComboBox QAbstractItemView {{
-    background-color: {C_BG_CARD};
+    background-color: {C_BG_RAISED};
     color: {C_TEXT};
     border: 1px solid {C_BORDER};
+    border-radius: 5px;
     selection-background-color: {C_ACCENT};
     selection-color: #ffffff;
+    padding: 2px;
     outline: none;
 }}
 
-/* ===================================================================
+/* ═══════════════════════════════════════════════════════════════════════
    SLIDERS
-=================================================================== */
+═══════════════════════════════════════════════════════════════════════ */
 
 QSlider::groove:horizontal {{
     background-color: {C_BG_INPUT};
     height: 4px;
     border-radius: 2px;
-    border: 1px solid {C_BORDER};
+    border: none;
 }}
 
 QSlider::handle:horizontal {{
@@ -248,7 +278,8 @@ QSlider::handle:horizontal {{
 }}
 
 QSlider::handle:horizontal:hover {{
-    background-color: #6AB4FF;
+    background-color: #6FC4FB;
+    border-color: {C_BG_PANEL};
 }}
 
 QSlider::sub-page:horizontal {{
@@ -257,23 +288,25 @@ QSlider::sub-page:horizontal {{
     border-radius: 2px;
 }}
 
-/* ===================================================================
-   TABLES
-=================================================================== */
+/* ═══════════════════════════════════════════════════════════════════════
+   TABLES  —  taller rows, alternating colors, strong headers
+═══════════════════════════════════════════════════════════════════════ */
 
 QTableWidget {{
-    background-color: {C_BG_CARD};
+    background-color: {C_BG_RAISED};
     color: {C_TEXT};
-    gridline-color: {C_BORDER};
-    border: 1px solid {C_BORDER};
-    border-radius: 4px;
+    gridline-color: {C_BORDER_SUBTLE};
+    border: none;
+    border-radius: 6px;
     font-size: 9pt;
-    alternate-background-color: {C_BG_INPUT};
+    alternate-background-color: {C_ROW_ALT};
+    show-decoration-selected: 1;
 }}
 
 QTableWidget::item {{
-    padding: 4px 8px;
+    padding: 6px 10px;
     border: none;
+    min-height: 28px;
 }}
 
 QTableWidget::item:selected {{
@@ -282,58 +315,69 @@ QTableWidget::item:selected {{
 }}
 
 QTableWidget::item:hover {{
-    background-color: {C_HOVER};
+    background-color: {C_ROW_HOVER};
+}}
+
+QHeaderView {{
+    background-color: transparent;
 }}
 
 QHeaderView::section {{
-    background-color: {C_BG_DEEP};
-    color: {C_ACCENT2};
-    padding: 6px 10px;
+    background-color: {C_BG_BASE};
+    color: {C_ACCENT};
+    padding: 7px 12px;
     border: none;
-    border-right: 1px solid {C_BORDER};
+    border-right: 1px solid {C_BORDER_SUBTLE};
     border-bottom: 2px solid {C_ACCENT};
     font-weight: 700;
-    font-size: 9pt;
-    letter-spacing: 0.3px;
+    font-size: 8pt;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
 }}
 
 QHeaderView::section:first {{
     border-left: none;
 }}
 
-/* ===================================================================
-   PLAIN TEXT EDIT (Notes panel)
-=================================================================== */
+QHeaderView::section:hover {{
+    background-color: {C_BG_RAISED};
+    color: {C_TEXT};
+}}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PLAIN TEXT EDIT  (Notes & History panel)
+═══════════════════════════════════════════════════════════════════════ */
 
 QPlainTextEdit {{
-    background-color: {C_BG_DEEP};
+    background-color: {C_BG_BASE};
     color: {C_TEXT2};
-    border: 1px solid {C_BORDER};
-    border-radius: 4px;
+    border: none;
+    border-top: 1px solid {C_BORDER_SUBTLE};
+    border-radius: 0px;
     font-family: "{FONT_FAMILY_MONO}", "Courier New", monospace;
-    font-size: 9pt;
+    font-size: 8pt;
     padding: 6px;
     selection-background-color: {C_ACCENT};
 }}
 
-/* ===================================================================
-   SCROLL BARS
-=================================================================== */
+/* ═══════════════════════════════════════════════════════════════════════
+   SCROLL BARS  — high-contrast, clearly interactive
+═══════════════════════════════════════════════════════════════════════ */
 
 QScrollBar:vertical {{
-    background-color: #0A0D14;
+    background-color: {C_BG_BASE};
     width: 12px;
     margin: 0;
     border-radius: 6px;
-    border: 1px solid #252840;
+    border: 1px solid {C_BORDER_SUBTLE};
 }}
 
 QScrollBar::handle:vertical {{
-    background-color: #6B7DB5;
+    background-color: #5A6485;
     border-radius: 5px;
     min-height: 40px;
     margin: 2px;
-    border: 1px solid #8090CC;
+    border: 1px solid #7080AA;
 }}
 
 QScrollBar::handle:vertical:hover {{
@@ -342,7 +386,7 @@ QScrollBar::handle:vertical:hover {{
 }}
 
 QScrollBar::handle:vertical:pressed {{
-    background-color: #2E74CC;
+    background-color: #2A7FCC;
     border: 1px solid {C_ACCENT};
 }}
 
@@ -351,23 +395,23 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
 }}
 
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-    background: #0A0D14;
+    background: {C_BG_BASE};
 }}
 
 QScrollBar:horizontal {{
-    background-color: #0A0D14;
+    background-color: {C_BG_BASE};
     height: 12px;
     margin: 0;
     border-radius: 6px;
-    border: 1px solid #252840;
+    border: 1px solid {C_BORDER_SUBTLE};
 }}
 
 QScrollBar::handle:horizontal {{
-    background-color: #6B7DB5;
+    background-color: #5A6485;
     border-radius: 5px;
     min-width: 40px;
     margin: 2px;
-    border: 1px solid #8090CC;
+    border: 1px solid #7080AA;
 }}
 
 QScrollBar::handle:horizontal:hover {{
@@ -376,7 +420,7 @@ QScrollBar::handle:horizontal:hover {{
 }}
 
 QScrollBar::handle:horizontal:pressed {{
-    background-color: #2E74CC;
+    background-color: #2A7FCC;
     border: 1px solid {C_ACCENT};
 }}
 
@@ -385,22 +429,22 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
 }}
 
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
-    background: #0A0D14;
+    background: {C_BG_BASE};
 }}
 
-/* ===================================================================
-   SPLITTER
-=================================================================== */
+/* ═══════════════════════════════════════════════════════════════════════
+   SPLITTER HANDLES  — clearly draggable accent lines
+═══════════════════════════════════════════════════════════════════════ */
 
 QSplitter::handle {{
-    background-color: #252840;
+    background-color: {C_BORDER};
 }}
 
 QSplitter::handle:horizontal {{
     width: 5px;
-    background-color: #1A1E35;
-    border-left: 2px solid #4A9EFF;
-    border-right: 2px solid #4A9EFF;
+    background-color: {C_BG_BASE};
+    border-left: 2px solid {C_ACCENT};
+    border-right: 1px solid {C_BORDER_SUBTLE};
 }}
 
 QSplitter::handle:horizontal:hover {{
@@ -411,9 +455,9 @@ QSplitter::handle:horizontal:hover {{
 
 QSplitter::handle:vertical {{
     height: 5px;
-    background-color: #1A1E35;
-    border-top: 2px solid #4A9EFF;
-    border-bottom: 2px solid #4A9EFF;
+    background-color: {C_BG_BASE};
+    border-top: 2px solid {C_ACCENT};
+    border-bottom: 1px solid {C_BORDER_SUBTLE};
 }}
 
 QSplitter::handle:vertical:hover {{
@@ -422,34 +466,34 @@ QSplitter::handle:vertical:hover {{
     border-bottom: 2px solid #7EC0FF;
 }}
 
-/* ===================================================================
+/* ═══════════════════════════════════════════════════════════════════════
    STATUS BAR
-=================================================================== */
+═══════════════════════════════════════════════════════════════════════ */
 
 QStatusBar {{
-    background-color: {C_BG_DEEP};
+    background-color: {C_BG_BASE};
     color: {C_TEXT_MUTED};
-    border-top: 1px solid {C_BORDER};
+    border-top: 1px solid {C_BORDER_SUBTLE};
     font-size: 8pt;
-    padding: 2px 8px;
+    padding: 2px 10px;
 }}
 
-/* ===================================================================
-   TOOL TIP
-=================================================================== */
+/* ═══════════════════════════════════════════════════════════════════════
+   TOOLTIPS
+═══════════════════════════════════════════════════════════════════════ */
 
 QToolTip {{
-    background-color: {C_BG_CARD};
+    background-color: {C_BG_RAISED};
     color: {C_TEXT};
     border: 1px solid {C_ACCENT};
-    padding: 4px 8px;
-    border-radius: 4px;
+    padding: 5px 10px;
+    border-radius: 5px;
     font-size: 9pt;
 }}
 
-/* ===================================================================
-   MESSAGE BOX
-=================================================================== */
+/* ═══════════════════════════════════════════════════════════════════════
+   MESSAGE BOXES
+═══════════════════════════════════════════════════════════════════════ */
 
 QMessageBox {{
     background-color: {C_BG_PANEL};
@@ -459,119 +503,154 @@ QMessageBox {{
 QMessageBox QLabel {{
     color: {C_TEXT};
     font-size: {FONT_SIZE_BASE}pt;
+    min-width: 300px;
 }}
 
 QMessageBox QPushButton {{
-    min-width: 80px;
-    padding: 6px 20px;
+    min-width: 90px;
+    padding: 7px 22px;
+}}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PROGRESS BAR
+═══════════════════════════════════════════════════════════════════════ */
+
+QProgressBar {{
+    background-color: {C_BG_INPUT};
+    border: none;
+    border-radius: 3px;
+    height: 5px;
+    text-align: center;
+    color: transparent;
+}}
+
+QProgressBar::chunk {{
+    background-color: {C_ACCENT};
+    border-radius: 3px;
+}}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   FRAME  (used in summary cards, etc.)
+═══════════════════════════════════════════════════════════════════════ */
+
+QFrame[frameShape="5"] {{
+    color: {C_BORDER};
 }}
 
 """
 
-# --------------------------------------------------------------------------
-# Per-widget inline style helpers — used by individual widgets
-# so they stay consistent even if a widget overrides the stylesheet.
-# --------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Per-widget inline style helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
 def primary_button_style(color: str = C_ACCENT) -> str:
-    """Return inline style for a primary action button."""
+    """Primary action button — filled accent colour."""
     return (
         f"QPushButton {{"
         f"  background-color: {color};"
         f"  color: #ffffff;"
         f"  border: none;"
-        f"  border-radius: 5px;"
-        f"  padding: 8px 20px;"
+        f"  border-radius: 6px;"
+        f"  padding: 7px 22px;"
         f"  font-weight: 700;"
         f"  font-size: 9pt;"
         f"  letter-spacing: 0.3px;"
+        f"  min-height: 30px;"
         f"}}"
         f"QPushButton:hover {{"
-        f"  background-color: #6AB4FF;"
+        f"  background-color: #6FC4FB;"
         f"}}"
         f"QPushButton:pressed {{"
-        f"  background-color: #2E74CC;"
+        f"  background-color: #2A7FCC;"
         f"}}"
         f"QPushButton:disabled {{"
         f"  background-color: {C_BG_INPUT};"
         f"  color: {C_TEXT_MUTED};"
+        f"  border: 1px solid {C_BORDER_SUBTLE};"
         f"}}"
     )
 
 
 def instruction_banner_style() -> str:
-    """Return inline style for the instruction banner QLabel."""
+    """Instruction banner — low-contrast info block."""
     return (
         f"QLabel {{"
-        f"  background-color: #151B2E;"
+        f"  background-color: #1A2030;"
         f"  color: {C_TEXT2};"
-        f"  border: 1px solid {C_ACCENT};"
-        f"  border-left: 4px solid {C_ACCENT2};"
-        f"  border-radius: 6px;"
-        f"  padding: 10px 14px;"
-        f"  font-size: 9pt;"
-        f"  line-height: 1.5;"
+        f"  border: none;"
+        f"  border-left: 3px solid {C_ACCENT2};"
+        f"  border-radius: 5px;"
+        f"  padding: 8px 14px;"
+        f"  font-size: 8pt;"
+        f"  line-height: 1.6;"
         f"}}"
     )
 
 
 def step_title_font(size: int = 13) -> str:
-    """Return stylesheet fragment for step title labels."""
+    """Step title label style."""
     return (
         f"QLabel {{"
         f"  color: {C_TEXT};"
         f"  font-size: {size}pt;"
+        f"  font-weight: 700;"
+        f"  letter-spacing: 0.8px;"
+        f"  background: transparent;"
+        f"  padding-bottom: 4px;"
+        f"}}"
+    )
+
+
+def summary_banner_style() -> str:
+    """Summary statistics banner."""
+    return (
+        f"QLabel {{"
+        f"  background-color: #1C2535;"
+        f"  color: {C_TEXT2};"
+        f"  border: none;"
+        f"  border-left: 3px solid {C_ACCENT};"
+        f"  border-radius: 5px;"
+        f"  padding: 8px 14px;"
+        f"  font-size: 9pt;"
+        f"}}"
+    )
+
+
+def primary_element_label_style() -> str:
+    """Primary element name label — prominent, teal."""
+    return (
+        f"QLabel {{"
+        f"  background-color: transparent;"
+        f"  color: {C_ACCENT2};"
+        f"  font-size: 15pt;"
         f"  font-weight: 700;"
         f"  letter-spacing: 0.5px;"
         f"}}"
     )
 
 
-def summary_banner_style() -> str:
-    """Return inline style for the summary statistics banner QLabel."""
-    return (
-        f"QLabel {{"
-        f"  background-color: #151B2E;"
-        f"  color: {C_TEXT2};"
-        f"  border-left: 4px solid {C_ACCENT2};"
-        f"  padding: 10px;"
-        f"}}"
-    )
-
-
-def primary_element_label_style() -> str:
-    """Return inline style for the primary element name label (bold, 14pt, C_ACCENT2)."""
-    return (
-        f"QLabel {{"
-        f"  background-color: transparent;"
-        f"  color: {C_ACCENT2};"
-        f"  font-size: 14pt;"
-        f"  font-weight: 700;"
-        f"}}"
-    )
-
-
 def mean_vc_label_style(colour: str) -> str:
-    """Return inline style for the mean VC label (bold, 14pt, caller-supplied colour)."""
+    """Mean VC label — tier-coloured, bold."""
     return (
         f"QLabel {{"
         f"  background-color: transparent;"
         f"  color: {colour};"
-        f"  font-size: 14pt;"
+        f"  font-size: 15pt;"
         f"  font-weight: 700;"
         f"}}"
     )
 
 
 def progress_bar_style() -> str:
-    """Return inline style for an indeterminate QProgressBar (thin bar, no text)."""
+    """Thin indeterminate progress bar."""
     return (
         f"QProgressBar {{"
         f"  background-color: {C_BG_INPUT};"
         f"  border: none;"
         f"  border-radius: 3px;"
-        f"  height: 6px;"
+        f"  max-height: 5px;"
         f"  text-align: center;"
+        f"  color: transparent;"
         f"}}"
         f"QProgressBar::chunk {{"
         f"  background-color: {C_ACCENT};"

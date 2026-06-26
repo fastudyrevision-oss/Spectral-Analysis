@@ -90,18 +90,18 @@ class Step2Widget(QWidget):
 
         # Instructions
         instructions = QLabel(
-            "📋 Instructions:\n"
-            "1. Click 'Processed Spectrum' to load the corrected spectrum CSV from Step 1.\n"
-            "   • Expected file: 'SG_ALS_LIBS_processed.csv' (must contain 'Wavelength' and 'Corrected' columns).\n"
-            "2. Adjust detection parameters if needed:\n"
-            "   • Height Multiplier: peak must be this many times above the local noise level.\n"
+            "Instructions:\n"
+            "1. Load a spectrum file — either:\n"
+            "   • The corrected output from Step 1 ('SG_ALS_LIBS_processed.csv' — Wavelength + Corrected columns), or\n"
+            "   • A raw spectrum file (Wavelength + Intensity columns) to run detection directly.\n"
+            "2. Adjust detection parameters if needed (click 'Reset to Defaults' to restore originals):\n"
+            "   • Height Multiplier: peak must be this many times above local noise.\n"
             "   • Prominence: minimum height a peak stands out from surrounding baseline.\n"
-            "   • Baseline Window: window size (in points) for computing local noise.\n"
+            "   • Baseline Window: window size (points) for local noise estimation.\n"
             "   • Baseline K: noise sensitivity — higher K = fewer peaks detected.\n"
-            "3. Click 'Detect Peaks' to find all spectral peaks automatically.\n"
-            "4. Detected peaks are shown on the plot and listed in the table below.\n"
-            "5. Click 'Save Results' to export 'detected_peaks.csv' and the peak plot.\n"
-            "   ⚠ The saved CSV is required as input for Step 3."
+            "3. Click 'Detect Peaks' — results shown on plot and in table.\n"
+            "4. Click 'Save Results' to export the detected peaks CSV and plot PNG.\n"
+            "   The CSV is required as input for Step 3."
         )
         instructions.setWordWrap(True)
         instructions.setStyleSheet(instruction_banner_style())
@@ -148,6 +148,17 @@ class Step2Widget(QWidget):
         
         params_group.setLayout(params_layout)
         layout.addWidget(params_group)
+
+        # Reset defaults button — makes it obvious when params drift
+        reset_btn = QPushButton("↺  Reset to Defaults")
+        reset_btn.setToolTip(
+            f"Reset: Height={STEP2_PARAMS['HEIGHT_MULTIPLIER']}, "
+            f"Prominence={STEP2_PARAMS['PROMINENCE']}, "
+            f"Window={STEP2_PARAMS['BASELINE_WINDOW']}, "
+            f"K={STEP2_PARAMS['BASELINE_K']}"
+        )
+        reset_btn.clicked.connect(self._on_reset_params)
+        layout.addWidget(reset_btn)
         
         # Process button
         self.process_button = QPushButton("🔍  Detect Peaks")
@@ -229,48 +240,53 @@ class Step2Widget(QWidget):
             
             df = pd.read_csv(str(self.file_selector.get_filepath()))
             
-            # Try to find wavelength and corrected columns
+            # Try to find wavelength and corrected/intensity columns
             wl_col = None
             corrected_col = None
-            
+            intensity_col = None
+
             for col in df.columns:
                 col_lower = col.lower()
-                if 'wavelength' in col_lower or 'wl' in col_lower:
+                if 'wavelength' in col_lower or col_lower == 'wl':
                     wl_col = col
                 if 'corrected' in col_lower:
                     corrected_col = col
-            
-            if wl_col is None or corrected_col is None:
-                # Check if this looks like a detected peaks file (has only wavelength + intensity)
-                has_wl = any('wavelength' in col.lower() or 'wl' in col.lower() for col in df.columns)
-                has_intensity = any('intensity' in col.lower() or 'signal' in col.lower() for col in df.columns)
-                
-                if has_wl and has_intensity and not corrected_col:
-                    show_error("Error", 
-                        "This file appears to be a detected peaks output file.\n\n"
-                        "Step 2 requires the PROCESSED spectrum output from Step 1.\n\n"
-                        "Please load the 'SG_ALS_LIBS_processed.csv' file from Step 1 output.")
-                    self.process_button.setEnabled(True)
-                    self.info_label.setText("Error: Wrong file format")
-                    return
-                else:
-                    show_error("Error", 
-                        "Cannot find required columns in file.\n\n"
-                        "Expected: Wavelength and Corrected columns\n"
-                        "This file may not be properly formatted.")
-                    self.process_button.setEnabled(True)
-                    self.info_label.setText("Error: Missing required columns")
-                    return
-            else:
-                # Create ProcessedSpectra-like object
-                class ProcessedSpectra:
-                    pass
-                
-                self.processed_data = ProcessedSpectra()
-                self.processed_data.wavelength = df[wl_col].values.astype(float)
-                self.processed_data.corrected = df[corrected_col].values.astype(float)
-            
-            logger.info(f"Loaded spectrum: {len(self.processed_data.wavelength)} points")
+                if ('intensity' in col_lower or 'signal' in col_lower
+                        or 'counts' in col_lower):
+                    intensity_col = col
+
+            if wl_col is None:
+                show_error("Error",
+                    "Cannot find a wavelength column in the selected file.\n"
+                    "Expected a column named 'Wavelength' or 'wl'.")
+                self.process_button.setEnabled(True)
+                self.info_label.setText("Error: No wavelength column found")
+                return
+
+            # Determine which intensity column to use:
+            # Prefer 'Corrected' (Step 1 output); fall back to 'Intensity' (raw file)
+            use_col = corrected_col if corrected_col else intensity_col
+
+            if use_col is None:
+                show_error("Error",
+                    "Cannot find an intensity column in the selected file.\n"
+                    "Expected 'Corrected', 'Intensity', 'Signal', or 'Counts'.")
+                self.process_button.setEnabled(True)
+                self.info_label.setText("Error: No intensity column found")
+                return
+
+            class ProcessedSpectra:
+                pass
+
+            self.processed_data = ProcessedSpectra()
+            self.processed_data.wavelength = df[wl_col].values.astype(float)
+            self.processed_data.corrected  = df[use_col].values.astype(float)
+
+            src = "Step 1 corrected" if corrected_col else "raw intensity"
+            logger.info(
+                f"Loaded spectrum: {len(self.processed_data.wavelength)} points "
+                f"using column '{use_col}' ({src})"
+            )
             
         except Exception as e:
             logger.error(f"Failed to load file: {e}")
@@ -325,10 +341,13 @@ class Step2Widget(QWidget):
             # Update table
             self._update_table()
             
-            # Update info
+            # Update info — show peak count AND the params that produced it
             self.info_label.setText(
                 f"Detected: {len(self.detected_peaks)} peaks\n"
-                f"Wavelength range: {peak_wl.min():.2f} - {peak_wl.max():.2f} nm"
+                f"Range: {peak_wl.min():.2f} – {peak_wl.max():.2f} nm\n"
+                f"Params: Height={self.height_control.value():.1f}  "
+                f"K={self.baseline_k_control.value():.1f}  "
+                f"Window={int(self.baseline_window_control.value())}"
             )
             
             # Enable save
@@ -336,6 +355,15 @@ class Step2Widget(QWidget):
         
         self.process_button.setEnabled(True)
     
+    def _on_reset_params(self):
+        """Reset all detection parameters to their default values."""
+        self.height_control.set_value(STEP2_PARAMS['HEIGHT_MULTIPLIER'])
+        self.prominence_control.set_value(STEP2_PARAMS['PROMINENCE'])
+        self.baseline_window_control.set_value(STEP2_PARAMS['BASELINE_WINDOW'])
+        self.baseline_k_control.set_value(STEP2_PARAMS['BASELINE_K'])
+        self.info_label.setText("Parameters reset to defaults. Ready to detect peaks.")
+        logger.info("Step 2 parameters reset to defaults")
+
     def _on_detection_error(self, error: str):
         """Handle detection error."""
         logger.error(f"Detection error: {error}")
@@ -357,30 +385,50 @@ class Step2Widget(QWidget):
             self.table.setItem(i, 1, QTableWidgetItem(f"{peak.intensity:.6g}"))
     
     def _on_save_clicked(self):
-        """Save detected peaks to file."""
+        """Save detected peaks — user picks a directory, filenames get a timestamp."""
         if self.detected_peaks is None:
             show_error("Error", "No peaks to save")
             return
-        
+
+        from PyQt6.QtWidgets import QFileDialog
+        from datetime import datetime
+
+        # Ask user where to save
+        save_dir = QFileDialog.getExistingDirectory(
+            self, "Select Save Directory", str(Path.home())
+        )
+        if not save_dir:
+            return  # user cancelled
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_name  = f"detected_peaks_{ts}.csv"
+        plot_name = f"detected_peaks_{ts}.png"
+        csv_path_str  = str(Path(save_dir) / csv_name)
+        plot_path_str = str(Path(save_dir) / plot_name)
+
         try:
             writer = CSVWriter()
-            csv_path = writer.write_detected_peaks("detected_peaks.csv", self.detected_peaks)
+            csv_path = writer.write_detected_peaks(csv_path_str, self.detected_peaks)
             logger.info(f"Saved detected peaks to {csv_path}")
-            
+
             # Generate plot
             plot_gen = PlotGenerator()
-            peak_wl = np.array([p.wavelength for p in self.detected_peaks])
-            peak_int = np.array([p.intensity for p in self.detected_peaks])
+            peak_wl  = np.array([p.wavelength for p in self.detected_peaks])
+            peak_int = np.array([p.intensity  for p in self.detected_peaks])
             plot_path = plot_gen.plot_step2_peaks(
                 self.processed_data.wavelength,
                 self.processed_data.corrected,
                 self.detected_peaks,
-                "Automatic_peaks_identification.png"
+                plot_path_str,
             )
             logger.info(f"Saved peak plot to {plot_path}")
-            
-            show_info("Success", f"Results saved:\n- {csv_path}\n- {plot_path}")
-            
+
+            show_info(
+                "Saved",
+                f"Files saved to:\n{save_dir}\n\n"
+                f"  {csv_name}\n  {plot_name}"
+            )
+
         except Exception as e:
             logger.error(f"Failed to save results: {e}")
             show_error("Error", f"Failed to save results:\n{e}")

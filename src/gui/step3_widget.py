@@ -59,13 +59,17 @@ class Step3Widget(QWidget):
 
         # Chart figures
         self.freq_fig = Figure(figsize=(5, 3), dpi=100)
+        self.freq_fig.patch.set_facecolor("#141519")
         self.freq_canvas = FigureCanvasQTAgg(self.freq_fig)
+        self.freq_canvas.setStyleSheet("background-color: #141519;")
         self.freq_canvas.setMinimumHeight(200)
         self.freq_canvas.setMinimumWidth(260)
         self.freq_toolbar = NavigationToolbar2QT(self.freq_canvas)
 
         self.score_fig = Figure(figsize=(5, 3), dpi=100)
+        self.score_fig.patch.set_facecolor("#141519")
         self.score_canvas = FigureCanvasQTAgg(self.score_fig)
+        self.score_canvas.setStyleSheet("background-color: #141519;")
         self.score_canvas.setMinimumHeight(200)
         self.score_canvas.setMinimumWidth(260)
         self.score_toolbar = NavigationToolbar2QT(self.score_canvas)

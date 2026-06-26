@@ -18,11 +18,14 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit
 )
 from PyQt6.QtGui import QFont
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
 
 from src import setup_logger
+from src.gui.theme import (
+    C_BG_BASE, C_BG_RAISED, C_BG_PANEL, C_BORDER_SUBTLE,
+    C_ACCENT, C_ACCENT2, C_WARN, C_TEXT, C_TEXT2, C_TEXT_MUTED,
+)
 
 logger = setup_logger(__name__)
 
@@ -174,89 +177,72 @@ class ParameterControl(QWidget):
 
 
 class MatplotlibCanvas(FigureCanvas):
-    """
-    Matplotlib canvas for embedding plots in PyQt6.
-    
-    Allows display of publication-quality plots within GUI.
-    """
-    
+    """Matplotlib canvas with dark theme — consistent with the application palette."""
+
     def __init__(self, width: float = 5, height: float = 4, dpi: int = 100):
-        """
-        Initialize canvas.
-        
-        Parameters
-        ----------
-        width : float
-            Figure width in inches
-        height : float
-            Figure height in inches
-        dpi : int
-            Dots per inch (screen display)
-        """
         self.fig = Figure(figsize=(width, height), dpi=dpi)
         self.axes = self.fig.add_subplot(111)
-        
+
         super().__init__(self.fig)
-        self.setStyleSheet("background-color: white")
-    
-    def plot_spectrum(self, wavelength: np.ndarray, intensity: np.ndarray, 
-                      title: str = "Spectrum", ylabel: str = "Intensity"):
-        """
-        Plot spectrum.
-        
-        Parameters
-        ----------
-        wavelength : np.ndarray
-            Wavelength array (nm)
-        intensity : np.ndarray
-            Intensity array
-        title : str
-            Plot title
-        ylabel : str
-            Y-axis label
-        """
+
+        # Dark background — no white flash
+        self.setStyleSheet(f"background-color: {C_BG_BASE};")
+        self._apply_dark_style()
+
+    def _apply_dark_style(self):
+        """Apply dark theme to figure and current axes."""
+        self.fig.patch.set_facecolor(C_BG_BASE)
+        ax = self.axes
+        ax.set_facecolor(C_BG_RAISED)
+        ax.tick_params(colors=C_TEXT2, which="both", labelsize=8)
+        ax.xaxis.label.set_color(C_TEXT2)
+        ax.yaxis.label.set_color(C_TEXT2)
+        ax.title.set_color(C_TEXT)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(C_BORDER_SUBTLE)
+            spine.set_linewidth(0.8)
+        ax.grid(True, color=C_BORDER_SUBTLE, alpha=0.55, linewidth=0.5,
+                linestyle="--")
+
+    def plot_spectrum(self, wavelength, intensity,
+                     title: str = "Spectrum", ylabel: str = "Intensity"):
+        """Plot corrected spectrum with dark theme."""
         self.axes.clear()
-        self.axes.plot(wavelength, intensity, 'b-', linewidth=0.8)
+        self.axes.plot(wavelength, intensity,
+                       color=C_ACCENT, linewidth=0.9, alpha=0.95)
         self.axes.set_xlabel("Wavelength (nm)")
         self.axes.set_ylabel(ylabel)
         self.axes.set_title(title)
-        self.axes.grid(True, alpha=0.3)
-        self.fig.tight_layout()
+        self._apply_dark_style()
+        self.fig.tight_layout(pad=1.2)
         self.draw()
-    
-    def plot_peaks(self, wavelength: np.ndarray, intensity: np.ndarray, 
-                   peak_wl: np.ndarray, peak_int: np.ndarray, title: str = "Detected Peaks"):
-        """
-        Plot spectrum with detected peaks.
-        
-        Parameters
-        ----------
-        wavelength : np.ndarray
-            Wavelength array (nm)
-        intensity : np.ndarray
-            Intensity array
-        peak_wl : np.ndarray
-            Peak wavelengths (nm)
-        peak_int : np.ndarray
-            Peak intensities
-        title : str
-            Plot title
-        """
+
+    def plot_peaks(self, wavelength, intensity,
+                   peak_wl, peak_int, title: str = "Detected Peaks"):
+        """Plot spectrum with detected peaks, dark theme."""
         self.axes.clear()
-        self.axes.plot(wavelength, intensity, 'b-', linewidth=0.8, label="Spectrum")
-        self.axes.scatter(peak_wl, peak_int, color='red', s=30, marker='x', 
-                         label=f"Peaks ({len(peak_wl)})")
+        self.axes.plot(wavelength, intensity,
+                       color=C_ACCENT, linewidth=0.9, alpha=0.9,
+                       label="Spectrum")
+        self.axes.scatter(peak_wl, peak_int,
+                          color=C_WARN, s=32, marker="x", linewidths=1.4,
+                          label=f"Peaks ({len(peak_wl)})", zorder=3)
         self.axes.set_xlabel("Wavelength (nm)")
         self.axes.set_ylabel("Intensity")
         self.axes.set_title(title)
-        self.axes.legend()
-        self.axes.grid(True, alpha=0.3)
-        self.fig.tight_layout()
+        leg = self.axes.legend(loc="upper right", fontsize=8, framealpha=0.6)
+        leg.get_frame().set_facecolor(C_BG_RAISED)
+        leg.get_frame().set_edgecolor(C_BORDER_SUBTLE)
+        for txt in leg.get_texts():
+            txt.set_color(C_TEXT2)
+        self._apply_dark_style()
+        self.fig.tight_layout(pad=1.2)
         self.draw()
-    
+
     def clear(self):
-        """Clear all plots."""
+        """Clear plot and restore dark style."""
         self.axes.clear()
+        self._apply_dark_style()
         self.draw()
 
 
@@ -292,7 +278,7 @@ class FileSelector(QWidget):
         # File path display
         self.path_label = QLabel("(No file selected)")
         self.path_label.setStyleSheet(
-            "color: #555970; font-style: italic;"
+            f"color: {C_TEXT_MUTED}; font-style: italic;"
         )
         layout.addWidget(self.path_label, stretch=1)
 
@@ -312,7 +298,7 @@ class FileSelector(QWidget):
             self.filepath = Path(filepath)
             self.path_label.setText(str(self.filepath.name))
             self.path_label.setStyleSheet(
-                "color: #2DD4BF; font-style: normal; font-weight: 600;"
+                f"color: {C_ACCENT2}; font-style: normal; font-weight: 600;"
             )
     
     def get_filepath(self) -> Path:
@@ -325,7 +311,7 @@ class FileSelector(QWidget):
             self.filepath = filepath
             self.path_label.setText(str(filepath.name))
             self.path_label.setStyleSheet(
-                "color: #2DD4BF; font-style: normal; font-weight: 600;"
+                f"color: {C_ACCENT2}; font-style: normal; font-weight: 600;"
             )
 
 
@@ -404,10 +390,10 @@ class NotesPanel(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         
         # Title
-        title = QLabel("📋 Notes & History")
+        title = QLabel("Notes & History")
         title_font = title.font()
         title_font.setBold(True)
-        title_font.setPointSize(10)
+        title_font.setPointSize(9)
         title.setFont(title_font)
         layout.addWidget(title)
         

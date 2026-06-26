@@ -22,6 +22,7 @@ from matplotlib.axes import Axes
 from src.gui.theme import (
     C_ACCENT, C_ACCENT2, C_BG_CARD, C_BG_DEEP,
     C_BORDER, C_ERROR, C_SUCCESS, C_TEXT, C_TEXT2, C_WARN,
+    C_BG_RAISED, C_BG_BASE, C_BORDER_SUBTLE,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,14 +61,16 @@ def _element_colours(elements: list[str]) -> dict[str, str]:
 
 
 def _style_legend(ax: Axes) -> None:
-    """Make legend text visible on the dark background (compatible with all mpl versions)."""
+    """Make legend text visible on the dark background."""
     leg = ax.get_legend()
     if leg is None:
         return
-    leg.get_frame().set_facecolor(C_BG_CARD)
-    leg.get_frame().set_edgecolor(C_BORDER)
+    leg.get_frame().set_facecolor(C_BG_RAISED)
+    leg.get_frame().set_edgecolor(C_BORDER_SUBTLE)
+    leg.get_frame().set_alpha(0.9)
     for text in leg.get_texts():
-        text.set_color(C_TEXT)
+        text.set_color(C_TEXT2)
+        text.set_fontsize(8)
 
 
 def _finish(fig: Figure, ax: Axes) -> None:
@@ -92,16 +95,18 @@ class ChartEngine:
 
     @staticmethod
     def apply_dark_style(fig: Figure, ax: Axes) -> None:
-        """Apply Theme_Palette dark background to figure and axes."""
-        fig.patch.set_facecolor(C_BG_DEEP)
-        ax.set_facecolor(C_BG_CARD)
-        ax.tick_params(colors=C_TEXT, which="both")
-        ax.xaxis.label.set_color(C_TEXT)
-        ax.yaxis.label.set_color(C_TEXT)
+        """Apply the professional dark theme to figure and axes."""
+        fig.patch.set_facecolor(C_BG_BASE)
+        ax.set_facecolor(C_BG_RAISED)
+        ax.tick_params(colors=C_TEXT2, which="both", labelsize=8)
+        ax.xaxis.label.set_color(C_TEXT2)
+        ax.yaxis.label.set_color(C_TEXT2)
         ax.title.set_color(C_TEXT)
         for spine in ax.spines.values():
-            spine.set_edgecolor(C_BORDER)
-        ax.grid(True, color=C_BORDER, alpha=0.4, linewidth=0.5)
+            spine.set_edgecolor(C_BORDER_SUBTLE)
+            spine.set_linewidth(0.8)
+        ax.grid(True, color=C_BORDER_SUBTLE, alpha=0.6, linewidth=0.5,
+                linestyle="--")
 
     # ------------------------------------------------------------------
     # Colour utilities
@@ -399,10 +404,20 @@ class ChartEngine:
 
     @staticmethod
     def _show_placeholder(ax: Axes, message: str) -> None:
-        """Display centred placeholder text on a cleared axes."""
+        """Display a centred placeholder with label text on a cleared axes."""
         ax.set_xticks([])
         ax.set_yticks([])
-        ax.text(0.5, 0.5, message,
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_facecolor(C_BG_RAISED)
+        # Large muted dash as visual anchor (no emoji — font may not support it)
+        ax.text(0.5, 0.56, "- -",
                 transform=ax.transAxes,
                 ha="center", va="center",
-                color=C_TEXT2, fontsize=11, style="italic")
+                color=C_BORDER, fontsize=28, fontweight="bold",
+                fontfamily="monospace")
+        ax.text(0.5, 0.36, message,
+                transform=ax.transAxes,
+                ha="center", va="center",
+                color=C_TEXT2, fontsize=10,
+                style="italic", alpha=0.7)

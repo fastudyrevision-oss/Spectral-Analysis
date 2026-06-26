@@ -89,7 +89,9 @@ def _section_header(text: str) -> QLabel:
 
 def _mini_canvas(figsize=(5, 2.6), dpi=90) -> tuple[Figure, FigureCanvasQTAgg]:
     fig = Figure(figsize=figsize, dpi=dpi)
+    fig.patch.set_facecolor("#141519")
     canvas = FigureCanvasQTAgg(fig)
+    canvas.setStyleSheet("background-color: #141519;")
     canvas.setMinimumHeight(180)
     canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
     return fig, canvas
@@ -359,10 +361,10 @@ class SummaryWidget(QWidget):
             try:
                 wl = np.asarray(data.wavelength)
                 corr = np.asarray(data.corrected)
-                ax.plot(wl, corr, color=C_ACCENT, linewidth=0.8)
-                ax.set_xlabel("Wavelength (nm)", color=C_TEXT, fontsize=8)
-                ax.set_ylabel("Intensity", color=C_TEXT, fontsize=8)
-                ax.set_title("Corrected Spectrum", color=C_TEXT, fontsize=9)
+                ax.plot(wl, corr, color="#3FA9F5", linewidth=0.9, alpha=0.95)
+                ax.set_xlabel("Wavelength (nm)", color="#AEB7C4", fontsize=8)
+                ax.set_ylabel("Intensity", color="#AEB7C4", fontsize=8)
+                ax.set_title("Corrected Spectrum", color="#F0F2F5", fontsize=9)
                 ChartEngine.apply_dark_style(fig, ax)
                 pts = len(wl)
                 rng = f"{wl.min():.2f} – {wl.max():.2f} nm"
