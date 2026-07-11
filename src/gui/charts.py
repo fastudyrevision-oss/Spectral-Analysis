@@ -32,9 +32,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 ACCENT_CYCLE: list[str] = [C_ACCENT, C_ACCENT2, C_SUCCESS, C_WARN]
-TIER_BINS:    list[float] = [0.0, 0.70, 0.85, 0.95, 1.0]
+TIER_BINS:    list[float] = [0.0, 0.50, 0.70, 0.90, 1.0]
 TIER_COLOURS: list[str]  = [C_ERROR, C_WARN, C_ACCENT, C_SUCCESS]   # Weak→Excellent
-TIER_LABELS:  list[str]  = ["Weak", "Moderate", "Good", "Excellent"]
+TIER_LABELS:  list[str]  = ["Weak\n(VC<0.50)", "Moderate\n(0.50–0.69)",
+                             "Good\n(0.70–0.89)", "Excellent\n(VC≥0.90)"]
 
 _MPL_EXTRA = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
@@ -119,7 +120,15 @@ class ChartEngine:
 
     @staticmethod
     def classify_vc(vc) -> tuple[str, str, str]:
-        """Return (tier_label, bg_hex, fg_hex) for a VC value."""
+        """Return (tier_label, bg_hex, fg_hex) for a VC value.
+
+        Tiers:
+          Excellent : VC >= 0.90
+          Good      : 0.70 <= VC < 0.90
+          Moderate  : 0.50 <= VC < 0.70
+          Weak      : VC  <  0.50
+          Failed    : NaN / None
+        """
         if vc is None:
             return ("Failed", C_BG_CARD, C_TEXT2)
         try:
@@ -128,9 +137,9 @@ class ChartEngine:
         except (TypeError, ValueError):
             return ("Failed", C_BG_CARD, C_TEXT2)
         v = float(vc)
-        if v > 0.95:   return ("Excellent", C_SUCCESS, "#FFFFFF")
-        if v >= 0.85:  return ("Good",      C_ACCENT,  "#FFFFFF")
-        if v >= 0.70:  return ("Moderate",  C_WARN,    "#FFFFFF")
+        if v >= 0.90:  return ("Excellent", C_SUCCESS, "#FFFFFF")
+        if v >= 0.70:  return ("Good",      C_ACCENT,  "#FFFFFF")
+        if v >= 0.50:  return ("Moderate",  C_WARN,    "#FFFFFF")
         return              ("Weak",       C_ERROR,   "#FFFFFF")
 
     # ------------------------------------------------------------------
@@ -269,7 +278,7 @@ class ChartEngine:
 
     @staticmethod
     def render_vc_histogram(ax: Axes, validation_results_df: pd.DataFrame) -> None:
-        """VC quality histogram with fixed tier bins (Step 5)."""
+        """VC quality histogram with tier annotations and per-bar wavelength lists (Step 5)."""
         ax.clear()
         fig = ax.get_figure()
         try:
@@ -284,27 +293,93 @@ class ChartEngine:
                 ChartEngine.apply_dark_style(fig, ax)
                 return
 
-            bin_edges = TIER_BINS
-            for i in range(len(bin_edges) - 1):
-                lo, hi  = bin_edges[i], bin_edges[i + 1]
-                if i == len(bin_edges) - 2:   # last bin: inclusive upper edge
+            # Build a mapping: tier index → list of wavelengths in that tier
+            has_wl = "Wavelength_nm" in validation_results_df.columns
+            tier_wavelengths: list[list[float]] = [[] for _ in range(len(TIER_BINS) - 1)]
+
+            if has_wl:
+                for _, row in validation_results_df.iterrows():
+                    vc = row["Validation_Coefficient"]
+                    wl = row["Wavelength_nm"]
+                    if pd.isna(vc):
+                        continue
+                    v = float(vc)
+                    for i in range(len(TIER_BINS) - 1):
+                        lo, hi = TIER_BINS[i], TIER_BINS[i + 1]
+                        if i == len(TIER_BINS) - 2:
+                            if lo <= v <= hi:
+                                tier_wavelengths[i].append(float(wl))
+                                break
+                        else:
+                            if lo <= v < hi:
+                                tier_wavelengths[i].append(float(wl))
+                                break
+
+            # Draw bars
+            bars_drawn = []
+            counts = []
+            for i in range(len(TIER_BINS) - 1):
+                lo, hi = TIER_BINS[i], TIER_BINS[i + 1]
+                if i == len(TIER_BINS) - 2:
                     count = int(((vc_values >= lo) & (vc_values <= hi)).sum())
                 else:
                     count = int(((vc_values >= lo) & (vc_values < hi)).sum())
+                counts.append(count)
                 mid   = (lo + hi) / 2.0
-                width = (hi - lo) * 0.85
-                ax.bar(mid, count, width=width, color=TIER_COLOURS[i],
-                       label=TIER_LABELS[i], edgecolor="none", align="center")
+                width = (hi - lo) * 0.82
+                bar = ax.bar(mid, count, width=width,
+                             color=TIER_COLOURS[i],
+                             label=TIER_LABELS[i],
+                             edgecolor=C_BORDER_SUBTLE,
+                             linewidth=0.6,
+                             align="center")
+                bars_drawn.append((bar, count, i, mid))
 
-            ax.set_title("Validation Coefficient Distribution", color=C_TEXT)
+            y_max = max(counts) if counts else 1
+
+            # Annotate each bar: tier label on top, then wavelengths inside
+            for bar_container, count, tier_idx, mid in bars_drawn:
+                if count == 0:
+                    continue
+
+                # Count label above bar
+                ax.text(mid, count + y_max * 0.02,
+                        str(count),
+                        ha="center", va="bottom",
+                        color=C_TEXT, fontsize=9, fontweight="bold")
+
+                # Wavelength list inside bar (up to 8 to avoid overflow)
+                wls = tier_wavelengths[tier_idx]
+                if wls:
+                    wls_sorted = sorted(wls)
+                    max_show = 8
+                    wl_lines = [f"{w:.1f}" for w in wls_sorted[:max_show]]
+                    if len(wls) > max_show:
+                        wl_lines.append(f"+{len(wls) - max_show} more")
+                    wl_text = "\n".join(wl_lines)
+                    # Place text in the middle of the bar
+                    text_y = count / 2.0
+                    ax.text(mid, text_y,
+                            wl_text,
+                            ha="center", va="center",
+                            color="#FFFFFF", fontsize=6.5,
+                            alpha=0.92,
+                            linespacing=1.4)
+
+            ax.set_title("Validation Coefficient Distribution", color=C_TEXT,
+                         fontsize=10, fontweight="bold")
             ax.set_xlabel("Validation Coefficient (VC)", color=C_TEXT)
-            ax.set_ylabel("Count", color=C_TEXT)
-            ax.set_xticks(bin_edges)
-            ax.set_xlim(-0.02, 1.05)
-            # Y axis: integer ticks only
+            ax.set_ylabel("Number of Lines", color=C_TEXT)
+            ax.set_xticks(TIER_BINS)
+            ax.set_xticklabels([f"{b:.2f}" for b in TIER_BINS], fontsize=8)
+            ax.set_xlim(-0.04, 1.06)
+            ax.set_ylim(0, y_max * 1.25)
+
             import matplotlib.ticker as ticker
             ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-            ax.legend(loc="upper left", fontsize=8, framealpha=0.6)
+
+            ax.legend(loc="upper left", fontsize=7.5, framealpha=0.7,
+                      handlelength=1.2)
             _style_legend(ax)
             _finish(fig, ax)
 

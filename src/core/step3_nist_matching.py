@@ -127,28 +127,31 @@ class NISTMatcher:
     def calculate_score(aki: float, rel_int: float, delta: float) -> float:
         """
         Calculate matching score.
-        
+
         Scoring formula: Score = (Aki × relative_intensity) / (Δλ + 1e-6)
-        
+
+        A line is considered physically significant only when Aki ≥ 1e6 s⁻¹.
+        Lines below that threshold have negligible transition probability and
+        are assigned a score of 0 (treated as unmatched).
+
         Parameters
         ----------
         aki : float
-            Line strength (Aki value)
+            Einstein A-coefficient (transition probability, s⁻¹)
         rel_int : float
             Relative intensity
         delta : float
-            Wavelength difference
-        
+            Wavelength difference (nm)
+
         Returns
         -------
         float
-            Matching score
+            Matching score, or 0 if Aki < 1e6 or either value is non-positive
         """
-        if aki <= 0 or rel_int <= 0:
+        if aki < 1e6 or rel_int <= 0:
             return 0
-        
-        score = (aki * rel_int) / (delta + 1e-6)
-        return score
+
+        return (aki * rel_int) / (delta + 1e-6)
     
     def match_peaks(self, detected_peaks: List[DetectedPeak], 
                    nist_df: pd.DataFrame) -> List[NISTMatch]:

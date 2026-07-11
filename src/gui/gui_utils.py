@@ -7,11 +7,12 @@ Provides worker threads, plot embedding, and utility functions for the GUI.
 
 import sys
 import io
+import logging
 from pathlib import Path
 from typing import Callable, Any
 
 import numpy as np
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QDoubleSpinBox,
     QSlider, QFileDialog, QMessageBox, QProgressDialog, QPushButton, QComboBox,
@@ -368,108 +369,125 @@ class FileHistory:
 
 class NotesPanel(QWidget):
     """
-    Notes/status panel for displaying information and notes.
-    
-    Shows processing status, notes, and operation history.
+    Notes/status panel — shows live application log output.
+
+    A Qt-safe logging handler (QtLogHandler) is attached to the root logger
+    during __init__ so that every logger.info/warning/error call across all
+    modules automatically appears here in real time.
     """
-    
-    def __init__(self, max_lines: int = 50):
-        """
-        Initialize notes panel.
-        
-        Parameters
-        ----------
-        max_lines : int
-            Maximum number of lines to keep in history
-        """
+
+    def __init__(self, max_lines: int = 200):
         super().__init__()
         self.max_lines = max_lines
         self.notes = []
-        
+
         layout = QVBoxLayout()
         layout.setContentsMargins(5, 5, 5, 5)
-        
-        # Title
-        title = QLabel("Notes & History")
+
+        # Header row
+        header_row = QHBoxLayout()
+        title = QLabel("Application Log")
         title_font = title.font()
         title_font.setBold(True)
         title_font.setPointSize(9)
         title.setFont(title_font)
-        layout.addWidget(title)
-        
-        # Notes display (plain text for non-editable display)
-        self.text_display = QPlainTextEdit()
-        self.text_display.setReadOnly(True)
-        self.text_display.setMaximumHeight(150)
-        # Styling is handled by the global dark stylesheet in theme.py
-        layout.addWidget(self.text_display)
-        
-        # Button bar
-        button_layout = QHBoxLayout()
-        
+        header_row.addWidget(title)
+        header_row.addStretch()
+
         clear_btn = QPushButton("Clear")
-        clear_btn.setMaximumWidth(80)
+        clear_btn.setMaximumWidth(70)
         clear_btn.clicked.connect(self.clear)
-        button_layout.addWidget(clear_btn)
-        
+        header_row.addWidget(clear_btn)
+
         copy_btn = QPushButton("Copy All")
         copy_btn.setMaximumWidth(80)
         copy_btn.clicked.connect(self._on_copy)
-        button_layout.addWidget(copy_btn)
-        
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
-        
+        header_row.addWidget(copy_btn)
+
+        layout.addLayout(header_row)
+
+        self.text_display = QPlainTextEdit()
+        self.text_display.setReadOnly(True)
+        self.text_display.setMaximumHeight(150)
+        layout.addWidget(self.text_display)
+
         self.setLayout(layout)
-    
+
+        # Attach a Qt-safe log handler to the root logger.
+        # The handler emits a signal so widget updates always happen on the
+        # GUI thread, even when log calls come from worker threads.
+        self._log_handler = _QtLogHandler()
+        self._log_handler.log_record.connect(self._append_log)
+        self._log_handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                              datefmt="%H:%M:%S"))
+        logging.getLogger().addHandler(self._log_handler)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def add_note(self, note: str, note_type: str = "INFO"):
-        """
-        Add a note to the panel.
-        
-        Parameters
-        ----------
-        note : str
-            Note text
-        note_type : str
-            Type: 'INFO', 'SUCCESS', 'WARNING', 'ERROR'
-        """
+        """Append a hand-crafted note (legacy callers keep working)."""
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")
-        
-        # Format note with icon
-        icons = {
-            'INFO': 'ℹ️',
-            'SUCCESS': '✅',
-            'WARNING': '⚠️',
-            'ERROR': '❌'
-        }
-        icon = icons.get(note_type, 'ℹ️')
-        
-        formatted_note = f"[{timestamp}] {icon} {note}"
-        self.notes.append(formatted_note)
-        
-        # Keep only max_lines
+        icons = {'INFO': 'ℹ', 'SUCCESS': '✔', 'WARNING': '⚠', 'ERROR': '✘'}
+        icon = icons.get(note_type, 'ℹ')
+        self._append_log(f"[{timestamp}] {icon} {note}", note_type)
+
+    @pyqtSlot(str, str)
+    def _append_log(self, message: str, note_type: str):
+        """Append one line to the display (always called on the GUI thread)."""
+        self.notes.append(message)
         if len(self.notes) > self.max_lines:
             self.notes.pop(0)
-        
-        # Update display
         self.text_display.setPlainText('\n'.join(self.notes))
-        
-        # Auto-scroll to bottom
         self.text_display.verticalScrollBar().setValue(
-            self.text_display.verticalScrollBar().maximum()
-        )
-    
+            self.text_display.verticalScrollBar().maximum())
+
     def clear(self):
-        """Clear all notes."""
         self.notes.clear()
         self.text_display.clear()
-    
+
     def _on_copy(self):
-        """Copy all notes to clipboard."""
         from PyQt6.QtGui import QGuiApplication
         QGuiApplication.clipboard().setText(self.text_display.toPlainText())
-        logger.info("Notes copied to clipboard")
+
+
+from PyQt6.QtCore import QObject as _QObject
+
+
+class _LogBridge(_QObject):
+    """QObject bridge that carries the log signal on the GUI thread."""
+    log_record = pyqtSignal(str, str)
+
+
+class _QtLogHandler(logging.Handler):
+    """
+    Logging handler that forwards formatted log records to a Qt signal,
+    ensuring GUI updates happen on the main thread even from worker threads.
+    """
+    def __init__(self):
+        logging.Handler.__init__(self)
+        self._bridge = _LogBridge()
+
+    @property
+    def log_record(self):
+        return self._bridge.log_record
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            msg = self.format(record)
+            note_type = {
+                logging.DEBUG:    "INFO",
+                logging.INFO:     "INFO",
+                logging.WARNING:  "WARNING",
+                logging.ERROR:    "ERROR",
+                logging.CRITICAL: "ERROR",
+            }.get(record.levelno, "INFO")
+            self._bridge.log_record.emit(msg, note_type)
+        except Exception:
+            self.handleError(record)
 
 
 class FileSelectorWithHistory(QWidget):

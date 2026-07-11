@@ -72,12 +72,12 @@
   - Implement `_on_export_pdf_clicked`: `QFileDialog.getSaveFileName(filter="PDF Files (*.pdf)", default="LIBS_Validation_Report.pdf")` → return if cancelled; `generate_pdf_report(...)` with all params; on ImportError show "reportlab not installed" error; on success show_info with path; on other exception show_error
   - _Requirements: 3, 4, 5.2, 6.2, 7, 8.4, 8.5, 8.6, 9, 10_
 
-- [~] 6. Update `src/gui/main_window.py` — Unicode-prefixed tab labels
+- [ ] 6. Update `src/gui/main_window.py` — Unicode-prefixed tab labels
   - Change the five `self.tabs.addTab(...)` calls to use: "① Step 1: Baseline Correction", "② Step 2: Peak Detection", "③ Step 3: Element Identification", "④ Step 4: Elemental Preferences", "⑤ Step 5: Validation"
   - Update `_on_tab_changed` `tab_names` list to match the new strings exactly
   - _Requirements: 8.1_
 
-- [~] 7. Write unit tests for ChartEngine in `tests/gui/test_charts.py`
+- [ ] 7. Write unit tests for ChartEngine in `tests/gui/test_charts.py`
   - Test `classify_vc` at exact boundary values: 0.0, 0.699, 0.70, 0.849, 0.85, 0.95, 0.951, 1.0, None, float('nan') — assert correct tier label, background colour, and foreground colour for each
   - Test `get_bar_colours` for n=1, 4, 5, 8 — verify exact cycling order matching ACCENT_CYCLE
   - Test `apply_dark_style`: figure facecolor equals C_BG_DEEP, axes facecolor equals C_BG_CARD after call
@@ -89,7 +89,7 @@
   - Test `render_vc_histogram` axis labels: title "Validation Coefficient Distribution", X-label "Validation Coefficient (VC)", Y-label "Count"
   - _Requirements: 1, 2, 3, 4_
 
-- [~] 8. Write property-based tests for ChartEngine in `tests/gui/test_charts_properties.py`
+- [ ] 8. Write property-based tests for ChartEngine in `tests/gui/test_charts_properties.py`
   - Use `hypothesis` library with `settings(max_examples=100)` on each test
   - **Property 1**: `@given` ranking_df with 1-20 rows → after `render_ranking_chart`, `len(ax.patches) == len(df)` — Feature: graphical-enhancements-and-export, Property 1: Bar count matches element count
   - **Property 2**: `@given` ranking_df including ties → ytick labels match ascending sort of (Wins DESC, Total_Score DESC) — Feature: graphical-enhancements-and-export, Property 2: Bars are sorted by (Wins DESC, Total_Score DESC)
@@ -102,7 +102,7 @@
   - **Property 9**: `@given` floats(0.0, 1.0, allow_nan=False) → `classify_vc` returns correct tier label and fg=='#FFFFFF' — Feature: graphical-enhancements-and-export, Property 9: VC classification is total and correct for all values in [0, 1]
   - _Requirements: 1.2, 1.3, 1.5, 2.2, 2.3, 3.2, 3.3, 4.1, 4.2_
 
-- [~] 9. Write property-based and integration tests for ExportEngine in `tests/gui/test_export_engine_properties.py` and `tests/gui/test_export_engine_integration.py`
+- [ ] 9. Write property-based and integration tests for ExportEngine in `tests/gui/test_export_engine_properties.py` and `tests/gui/test_export_engine_integration.py`
   - **Property 10**: `@given` DataFrame with 1-20 cols and 1-50 rows → write CSV to tmp_path, re-read first row, assert equals `list(df.columns)` — Feature: graphical-enhancements-and-export, Property 10: CSV export header matches DataFrame columns
   - **Property 11**: `@given` any Figure → `save_figure_png(fig, path)` produces file at path with size > 0 and figure facecolor was set to C_BG_DEEP — Feature: graphical-enhancements-and-export, Property 11: PNG export respects DPI and background colour
   - **Property 12**: `@given` non-empty validation_results_df → `generate_pdf_report` flowables list contains cover Paragraph, parameters Table, summary Table, results Table, VC Image, wavelengths Paragraph in that order — Feature: graphical-enhancements-and-export, Property 12: PDF flowables include all required sections for any validation result
@@ -113,7 +113,7 @@
   - Integration: `generate_pdf_report` with step4_results provided produces larger file than without
   - _Requirements: 5.3, 5.4, 5.5, 6.3, 7.3, 7.5, 7.6, 7.7_
 
-- [~] 10. Write widget example tests in `tests/gui/test_widget_examples.py`
+- [ ] 10. Write widget example tests in `tests/gui/test_widget_examples.py`
   - Assert `self.tabs.tabText(i)` starts with "①", "②", "③", "④", "⑤" for i = 0..4
   - Assert `step4_widget.export_csv_button.isEnabled() == False` on init
   - Assert `step4_widget.export_png_button.isEnabled() == False` on init

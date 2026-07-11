@@ -14,6 +14,8 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QSplitter, QScrollArea
 )
 from PyQt6.QtGui import QFont
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.figure import Figure
 
 from src import setup_logger
 from src.config import STEP2_PARAMS
@@ -21,10 +23,13 @@ from src.core.step2_peaks import PeaksDetector
 from src.io.file_reader import CSVReader
 from src.io.file_writer import CSVWriter, PlotGenerator
 from src.gui.gui_utils import (
-    ParameterControl, MatplotlibCanvas, FileSelector, WorkerThread,
+    ParameterControl, FileSelector, WorkerThread,
     show_error, show_info
 )
-from src.gui.theme import primary_button_style, instruction_banner_style, step_title_font
+from src.gui.theme import (
+    primary_button_style, instruction_banner_style, step_title_font,
+    C_BG_BASE, C_BG_RAISED, C_BORDER_SUBTLE, C_ACCENT, C_WARN, C_TEXT, C_TEXT2,
+)
 
 logger = setup_logger(__name__)
 
@@ -198,31 +203,62 @@ class Step2Widget(QWidget):
         """Create right visualization panel."""
         panel = QWidget()
         layout = QVBoxLayout()
-        
-        # Splitter for plot and table
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Splitter for plot+toolbar and table
         splitter = QSplitter(Qt.Orientation.Vertical)
-        
-        # Plot canvas
-        self.canvas = MatplotlibCanvas(width=7, height=4, dpi=100)
-        splitter.addWidget(self.canvas)
-        
+
+        # Plot canvas with navigation toolbar (zoom, pan, coordinates)
+        self.fig = Figure(figsize=(7, 4), dpi=100)
+        self.fig.patch.set_facecolor(C_BG_BASE)
+        self.canvas = FigureCanvasQTAgg(self.fig)
+        self.canvas.setStyleSheet(f"background-color: {C_BG_BASE};")
+        self.axes = self.fig.add_subplot(111)
+        self._apply_dark_style()
+        self.toolbar = NavigationToolbar2QT(self.canvas)
+
+        chart_container = QWidget()
+        chart_layout = QVBoxLayout(chart_container)
+        chart_layout.setContentsMargins(0, 0, 0, 0)
+        chart_layout.addWidget(self.canvas)
+        chart_layout.addWidget(self.toolbar)
+        splitter.addWidget(chart_container)
+
         # Results table
         table_label = QLabel("Detected Peaks Preview")
         table_font = QFont()
         table_font.setBold(True)
         table_label.setFont(table_font)
-        layout.addWidget(table_label)
-        
+
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["Wavelength (nm)", "Intensity"])
-        splitter.addWidget(self.table)
-        
+
+        table_container = QWidget()
+        table_layout = QVBoxLayout(table_container)
+        table_layout.setContentsMargins(4, 4, 4, 4)
+        table_layout.addWidget(table_label)
+        table_layout.addWidget(self.table)
+        splitter.addWidget(table_container)
+
         splitter.setSizes([500, 250])
         layout.addWidget(splitter)
-        
+
         panel.setLayout(layout)
         return panel
+
+    def _apply_dark_style(self):
+        """Apply dark theme to the axes."""
+        ax = self.axes
+        ax.set_facecolor(C_BG_RAISED)
+        ax.tick_params(colors=C_TEXT2, which="both", labelsize=8)
+        ax.xaxis.label.set_color(C_TEXT2)
+        ax.yaxis.label.set_color(C_TEXT2)
+        ax.title.set_color(C_TEXT)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(C_BORDER_SUBTLE)
+            spine.set_linewidth(0.8)
+        ax.grid(True, color=C_BORDER_SUBTLE, alpha=0.55, linewidth=0.5, linestyle="--")
     
     def _on_process_clicked(self):
         """Detect peaks when button clicked."""
@@ -330,13 +366,30 @@ class Step2Widget(QWidget):
             peak_int = np.array([p.intensity for p in self.detected_peaks])
             
             # Update plot
-            self.canvas.plot_peaks(
+            self.axes.clear()
+            self.axes.plot(
                 self.processed_data.wavelength,
                 self.processed_data.corrected,
-                peak_wl,
-                peak_int,
-                title="Detected Peaks"
+                color=C_ACCENT, linewidth=0.9, alpha=0.9,
+                label="Spectrum"
             )
+            self.axes.scatter(
+                peak_wl, peak_int,
+                color=C_WARN, s=32, marker="x", linewidths=1.4,
+                label=f"Peaks ({len(peak_wl)})", zorder=3
+            )
+            self.axes.set_xlabel("Wavelength (nm)")
+            self.axes.set_ylabel("Intensity")
+            self.axes.set_title("Detected Peaks")
+            leg = self.axes.legend(loc="upper right", fontsize=8, framealpha=0.6)
+            leg.get_frame().set_facecolor(C_BG_RAISED)
+            leg.get_frame().set_edgecolor(C_BORDER_SUBTLE)
+            for txt in leg.get_texts():
+                txt.set_color(C_TEXT2)
+            self._apply_dark_style()
+            self.fig.tight_layout(pad=1.2)
+            self.canvas.draw()
+            self.toolbar.home()
             
             # Update table
             self._update_table()
