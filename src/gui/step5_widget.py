@@ -33,12 +33,11 @@ from src.gui.charts import ChartEngine
 from src.gui.export_engine import export_step5_csv, export_step5_png, generate_pdf_report
 from src.gui.theme import (
     primary_button_style, instruction_banner_style, step_title_font,
-    summary_banner_style, mean_vc_label_style, progress_bar_style
+    summary_banner_style, mean_vc_label_style, progress_bar_style,
+    get_chart_bg,
 )
 
 logger = setup_logger(__name__)
-
-_CHART_BG = "#141519"
 
 
 class Step5Widget(QWidget):
@@ -236,10 +235,11 @@ class Step5Widget(QWidget):
         self.chart_tabs = QTabWidget()
 
         # Tab 1: VC Histogram
+        chart_bg = get_chart_bg()
         self.vc_fig = Figure(figsize=(8, 3), dpi=100)
-        self.vc_fig.patch.set_facecolor(_CHART_BG)
+        self.vc_fig.patch.set_facecolor(chart_bg)
         self.vc_canvas = FigureCanvasQTAgg(self.vc_fig)
-        self.vc_canvas.setStyleSheet(f"background-color: {_CHART_BG};")
+        self.vc_canvas.setStyleSheet(f"background-color: {chart_bg};")
         self.vc_toolbar = NavigationToolbar2QT(self.vc_canvas)
 
         hist_container = QWidget()
@@ -311,9 +311,9 @@ class Step5Widget(QWidget):
 
         # ── Canvas + toolbar ───────────────────────────────────────────────
         self.overlay_fig = Figure(figsize=(8, 4), dpi=100)
-        self.overlay_fig.patch.set_facecolor(_CHART_BG)
+        self.overlay_fig.patch.set_facecolor(chart_bg)
         self.overlay_canvas = FigureCanvasQTAgg(self.overlay_fig)
-        self.overlay_canvas.setStyleSheet(f"background-color: {_CHART_BG};")
+        self.overlay_canvas.setStyleSheet(f"background-color: {chart_bg};")
         self.overlay_toolbar = NavigationToolbar2QT(self.overlay_canvas)
         otl.addWidget(self.overlay_canvas, stretch=1)
         otl.addWidget(self.overlay_toolbar)
@@ -343,6 +343,19 @@ class Step5Widget(QWidget):
         t.setSortingEnabled(True)
         t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         return t
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Theme
+    # ──────────────────────────────────────────────────────────────────────
+
+    def apply_theme(self):
+        """Update chart backgrounds when the global theme changes."""
+        chart_bg = get_chart_bg()
+        for fig, canvas in [(self.vc_fig,      self.vc_canvas),
+                             (self.overlay_fig, self.overlay_canvas)]:
+            fig.patch.set_facecolor(chart_bg)
+            canvas.setStyleSheet(f"background-color: {chart_bg};")
+            canvas.draw()
 
     # ──────────────────────────────────────────────────────────────────────
     # Wavelength loading

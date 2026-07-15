@@ -35,11 +35,10 @@ from src.gui.charts import ChartEngine
 from src.gui.theme import (
     primary_button_style, instruction_banner_style, step_title_font,
     C_BG_BASE,
+    get_chart_bg, get_chart_axes_bg, get_chart_text, get_chart_text2, get_chart_border,
 )
 
 logger = setup_logger(__name__)
-
-_CHART_BG = "#141519"
 
 
 class Step3Widget(QWidget):
@@ -200,17 +199,18 @@ class Step3Widget(QWidget):
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         # ── Charts ─────────────────────────────────────────────────────────
+        chart_bg = get_chart_bg()
         self.freq_fig = Figure(figsize=(5, 3), dpi=100)
-        self.freq_fig.patch.set_facecolor(_CHART_BG)
+        self.freq_fig.patch.set_facecolor(chart_bg)
         self.freq_canvas = FigureCanvasQTAgg(self.freq_fig)
-        self.freq_canvas.setStyleSheet(f"background-color: {_CHART_BG};")
+        self.freq_canvas.setStyleSheet(f"background-color: {chart_bg};")
         self.freq_canvas.setMinimumHeight(180)
         self.freq_toolbar = NavigationToolbar2QT(self.freq_canvas)
 
         self.score_fig = Figure(figsize=(5, 3), dpi=100)
-        self.score_fig.patch.set_facecolor(_CHART_BG)
+        self.score_fig.patch.set_facecolor(chart_bg)
         self.score_canvas = FigureCanvasQTAgg(self.score_fig)
-        self.score_canvas.setStyleSheet(f"background-color: {_CHART_BG};")
+        self.score_canvas.setStyleSheet(f"background-color: {chart_bg};")
         self.score_canvas.setMinimumHeight(180)
         self.score_toolbar = NavigationToolbar2QT(self.score_canvas)
 
@@ -302,6 +302,19 @@ class Step3Widget(QWidget):
         else:
             self.nist_count_label.setText(
                 f"✅ {n} file{'s' if n > 1 else ''} queued")
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Theme
+    # ──────────────────────────────────────────────────────────────────────
+
+    def apply_theme(self):
+        """Update chart backgrounds when the global theme changes."""
+        chart_bg = get_chart_bg()
+        for fig, canvas in [(self.freq_fig, self.freq_canvas),
+                             (self.score_fig, self.score_canvas)]:
+            fig.patch.set_facecolor(chart_bg)
+            canvas.setStyleSheet(f"background-color: {chart_bg};")
+            canvas.draw()
 
     # ──────────────────────────────────────────────────────────────────────
     # Matching

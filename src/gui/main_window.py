@@ -23,7 +23,8 @@ from src.gui.step4_widget import Step4Widget
 from src.gui.step5_widget import Step5Widget
 from src.gui.summary_widget import SummaryWidget
 from src.gui.gui_utils import NotesPanel, FileHistory
-from src.gui.theme import APP_STYLESHEET, FONT_FAMILY_UI, FONT_SIZE_BASE
+from src.gui.theme import APP_STYLESHEET, LIGHT_STYLESHEET, FONT_FAMILY_UI, FONT_SIZE_BASE
+import src.gui.theme as _theme_module
 
 logger = setup_logger(__name__)
 
@@ -45,6 +46,7 @@ class SpectralAnalysisApp(QMainWindow):
 
         self.setWindowTitle("Spectral Analysis Software  |  5-Step LIBS Pipeline")
         self.setGeometry(100, 100, 1440, 900)
+        self._dark_mode = True   # start in dark mode
 
         logger.info("Starting Spectral Analysis Software GUI")
 
@@ -92,10 +94,43 @@ class SpectralAnalysisApp(QMainWindow):
         self.setStatusBar(self.statusBar)
         self.statusBar.showMessage("Ready")
 
+        # Theme toggle button — lives in the right corner of the status bar
+        self._theme_btn = QPushButton("☀  Light Mode")
+        self._theme_btn.setFixedHeight(22)
+        self._theme_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: 1px solid #3A4055; "
+            "border-radius: 4px; color: #AEB7C4; font-size: 8pt; padding: 0 10px; }"
+            "QPushButton:hover { border-color: #3FA9F5; color: #3FA9F5; }"
+        )
+        self._theme_btn.clicked.connect(self._on_toggle_theme)
+        self.statusBar.addPermanentWidget(self._theme_btn)
+
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.notes_panel.add_note("Application started", "INFO")
 
         logger.info("GUI initialization complete")
+
+    def _on_toggle_theme(self):
+        """Switch between dark and light application themes."""
+        self._dark_mode = not self._dark_mode
+        app = QApplication.instance()
+        if self._dark_mode:
+            _theme_module.set_theme("dark")
+            app.setStyleSheet(APP_STYLESHEET)
+            self._theme_btn.setText("☀  Light Mode")
+            self.statusBar.showMessage("Theme: Dark")
+            logger.info("Switched to dark theme")
+        else:
+            _theme_module.set_theme("light")
+            app.setStyleSheet(LIGHT_STYLESHEET)
+            self._theme_btn.setText("🌙  Dark Mode")
+            self.statusBar.showMessage("Theme: Light")
+            logger.info("Switched to light theme")
+        # Propagate to all widgets that have inline styles or matplotlib canvases
+        for widget in [self.step1_tab, self.step2_tab, self.step3_tab,
+                       self.step4_tab, self.step5_tab, self.summary_tab]:
+            if hasattr(widget, 'apply_theme'):
+                widget.apply_theme()
 
     def _on_tab_changed(self, index: int):
         """Refresh summary dashboard when its tab is activated."""

@@ -31,6 +31,7 @@ from src.gui.theme import (
     primary_button_style, instruction_banner_style, step_title_font,
     C_BG_BASE, C_BG_RAISED, C_BORDER_SUBTLE, C_ACCENT, C_ACCENT2,
     C_WARN, C_ERROR, C_TEXT, C_TEXT2,
+    get_chart_bg, get_chart_axes_bg, get_chart_text, get_chart_text2, get_chart_border,
 )
 
 logger = setup_logger(__name__)
@@ -90,6 +91,7 @@ class Step1Widget(QWidget):
         title.setFont(tf)
         title.setStyleSheet(step_title_font(13))
         layout.addWidget(title)
+        self._title_label = title
 
         instructions = QLabel(
             "📋 Instructions:\n"
@@ -108,6 +110,7 @@ class Step1Widget(QWidget):
         instructions.setWordWrap(True)
         instructions.setStyleSheet(instruction_banner_style())
         layout.addWidget(instructions)
+        self._instructions_label = instructions
 
         file_group = QGroupBox("Input File")
         fl = QVBoxLayout()
@@ -227,10 +230,11 @@ class Step1Widget(QWidget):
 
         Returns (fig, ax, canvas, toolbar) for later use.
         """
+        chart_bg = get_chart_bg()
         fig = Figure(figsize=(7, 4), dpi=100)
-        fig.patch.set_facecolor(C_BG_BASE)
+        fig.patch.set_facecolor(chart_bg)
         canvas = FigureCanvasQTAgg(fig)
-        canvas.setStyleSheet(f"background-color: {C_BG_BASE};")
+        canvas.setStyleSheet(f"background-color: {chart_bg};")
         ax = fig.add_subplot(111)
         self._style_ax(fig, ax)
         toolbar = NavigationToolbar2QT(canvas)
@@ -250,31 +254,56 @@ class Step1Widget(QWidget):
 
     @staticmethod
     def _style_ax(fig: Figure, ax) -> None:
-        """Apply dark theme to a figure/axes pair."""
-        fig.patch.set_facecolor(C_BG_BASE)
-        ax.set_facecolor(C_BG_RAISED)
-        ax.tick_params(colors=C_TEXT2, which="both", labelsize=8)
-        ax.xaxis.label.set_color(C_TEXT2)
-        ax.yaxis.label.set_color(C_TEXT2)
-        ax.title.set_color(C_TEXT)
+        """Apply current theme to a figure/axes pair."""
+        chart_bg = get_chart_bg()
+        axes_bg = get_chart_axes_bg()
+        text = get_chart_text()
+        text2 = get_chart_text2()
+        border = get_chart_border()
+        fig.patch.set_facecolor(chart_bg)
+        ax.set_facecolor(axes_bg)
+        ax.tick_params(colors=text2, which="both", labelsize=8)
+        ax.xaxis.label.set_color(text2)
+        ax.yaxis.label.set_color(text2)
+        ax.title.set_color(text)
         for spine in ax.spines.values():
-            spine.set_edgecolor(C_BORDER_SUBTLE)
+            spine.set_edgecolor(border)
             spine.set_linewidth(0.8)
-        ax.grid(True, color=C_BORDER_SUBTLE, alpha=0.55, linewidth=0.5,
+        ax.grid(True, color=border, alpha=0.55, linewidth=0.5,
                 linestyle="--")
 
     @staticmethod
     def _style_legend(ax) -> None:
-        """Style an existing legend for the dark theme."""
+        """Style an existing legend for the current theme."""
         leg = ax.get_legend()
         if leg is None:
             return
-        leg.get_frame().set_facecolor(C_BG_RAISED)
-        leg.get_frame().set_edgecolor(C_BORDER_SUBTLE)
+        leg.get_frame().set_facecolor(get_chart_axes_bg())
+        leg.get_frame().set_edgecolor(get_chart_border())
         leg.get_frame().set_alpha(0.85)
         for txt in leg.get_texts():
-            txt.set_color(C_TEXT2)
+            txt.set_color(get_chart_text2())
             txt.set_fontsize(8)
+
+    def apply_theme(self) -> None:
+        """Update inline styles and chart colours when theme changes."""
+        from src.gui import theme as _theme
+        # Refresh inline-styled labels
+        self._title_label.setStyleSheet(step_title_font(13))
+        self._instructions_label.setStyleSheet(instruction_banner_style())
+        # Update all 5 chart canvases
+        chart_bg = _theme.get_chart_bg()
+        for fig, canvas, ax in [
+            (self.fig_raw,  self.canvas_raw,  self.ax_raw),
+            (self.fig_sg,   self.canvas_sg,   self.ax_sg),
+            (self.fig_corr, self.canvas_corr, self.ax_corr),
+            (self.fig_sep,  self.canvas_sep,  self.ax_sep),
+            (self.fig_conv, self.canvas_conv, self.ax_conv),
+        ]:
+            canvas.setStyleSheet(f"background-color: {chart_bg};")
+            self._style_ax(fig, ax)
+            self._style_legend(ax)
+            canvas.draw()
 
     # ──────────────────────────────────────────────────────────────────────
     # Event handlers

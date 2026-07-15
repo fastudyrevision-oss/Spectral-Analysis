@@ -27,14 +27,13 @@ from src.gui.gui_utils import (
 )
 from src.gui.theme import (
     primary_button_style, instruction_banner_style, step_title_font,
-    summary_banner_style, primary_element_label_style, progress_bar_style
+    summary_banner_style, primary_element_label_style, progress_bar_style,
+    get_chart_bg,
 )
 from src.gui.charts import ChartEngine
 from src.gui.export_engine import export_step4_csv, export_step4_png
 
 logger = setup_logger(__name__)
-
-_CHART_BG = "#141519"
 
 
 class Step4Widget(QWidget):
@@ -169,17 +168,18 @@ class Step4Widget(QWidget):
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         # ── Charts ─────────────────────────────────────────────────────────
+        chart_bg = get_chart_bg()
         self.ranking_fig = Figure(figsize=(6, 3), dpi=100)
-        self.ranking_fig.patch.set_facecolor(_CHART_BG)
+        self.ranking_fig.patch.set_facecolor(chart_bg)
         self.ranking_canvas = FigureCanvasQTAgg(self.ranking_fig)
-        self.ranking_canvas.setStyleSheet(f"background-color: {_CHART_BG};")
+        self.ranking_canvas.setStyleSheet(f"background-color: {chart_bg};")
         self.ranking_canvas.setMinimumHeight(160)
         self.ranking_toolbar = NavigationToolbar2QT(self.ranking_canvas)
 
         self.scatter_fig = Figure(figsize=(6, 3), dpi=100)
-        self.scatter_fig.patch.set_facecolor(_CHART_BG)
+        self.scatter_fig.patch.set_facecolor(chart_bg)
         self.scatter_canvas = FigureCanvasQTAgg(self.scatter_fig)
-        self.scatter_canvas.setStyleSheet(f"background-color: {_CHART_BG};")
+        self.scatter_canvas.setStyleSheet(f"background-color: {chart_bg};")
         self.scatter_canvas.setMinimumHeight(160)
         self.scatter_toolbar = NavigationToolbar2QT(self.scatter_canvas)
 
@@ -246,6 +246,19 @@ class Step4Widget(QWidget):
         t.setSortingEnabled(True)
         t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         return t
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Theme
+    # ──────────────────────────────────────────────────────────────────────
+
+    def apply_theme(self):
+        """Update chart backgrounds when the global theme changes."""
+        chart_bg = get_chart_bg()
+        for fig, canvas in [(self.ranking_fig, self.ranking_canvas),
+                             (self.scatter_fig, self.scatter_canvas)]:
+            fig.patch.set_facecolor(chart_bg)
+            canvas.setStyleSheet(f"background-color: {chart_bg};")
+            canvas.draw()
 
     # ──────────────────────────────────────────────────────────────────────
     # Event handlers

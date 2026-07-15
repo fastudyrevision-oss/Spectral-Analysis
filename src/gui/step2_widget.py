@@ -29,6 +29,7 @@ from src.gui.gui_utils import (
 from src.gui.theme import (
     primary_button_style, instruction_banner_style, step_title_font,
     C_BG_BASE, C_BG_RAISED, C_BORDER_SUBTLE, C_ACCENT, C_WARN, C_TEXT, C_TEXT2,
+    get_chart_bg, get_chart_axes_bg, get_chart_text, get_chart_text2, get_chart_border,
 )
 
 logger = setup_logger(__name__)
@@ -92,6 +93,7 @@ class Step2Widget(QWidget):
         title.setFont(title_font)
         title.setStyleSheet(step_title_font(13))
         layout.addWidget(title)
+        self._title_label = title
 
         # Instructions
         instructions = QLabel(
@@ -210,11 +212,12 @@ class Step2Widget(QWidget):
 
         # Plot canvas with navigation toolbar (zoom, pan, coordinates)
         self.fig = Figure(figsize=(7, 4), dpi=100)
-        self.fig.patch.set_facecolor(C_BG_BASE)
+        chart_bg = get_chart_bg()
+        self.fig.patch.set_facecolor(chart_bg)
         self.canvas = FigureCanvasQTAgg(self.fig)
-        self.canvas.setStyleSheet(f"background-color: {C_BG_BASE};")
+        self.canvas.setStyleSheet(f"background-color: {chart_bg};")
         self.axes = self.fig.add_subplot(111)
-        self._apply_dark_style()
+        self._style_axes()
         self.toolbar = NavigationToolbar2QT(self.canvas)
 
         chart_container = QWidget()
@@ -247,18 +250,30 @@ class Step2Widget(QWidget):
         panel.setLayout(layout)
         return panel
 
-    def _apply_dark_style(self):
-        """Apply dark theme to the axes."""
+    def _style_axes(self):
+        """Apply current theme to the axes."""
         ax = self.axes
-        ax.set_facecolor(C_BG_RAISED)
-        ax.tick_params(colors=C_TEXT2, which="both", labelsize=8)
-        ax.xaxis.label.set_color(C_TEXT2)
-        ax.yaxis.label.set_color(C_TEXT2)
-        ax.title.set_color(C_TEXT)
+        ax.set_facecolor(get_chart_axes_bg())
+        ax.tick_params(colors=get_chart_text2(), which="both", labelsize=8)
+        ax.xaxis.label.set_color(get_chart_text2())
+        ax.yaxis.label.set_color(get_chart_text2())
+        ax.title.set_color(get_chart_text())
         for spine in ax.spines.values():
-            spine.set_edgecolor(C_BORDER_SUBTLE)
+            spine.set_edgecolor(get_chart_border())
             spine.set_linewidth(0.8)
-        ax.grid(True, color=C_BORDER_SUBTLE, alpha=0.55, linewidth=0.5, linestyle="--")
+        ax.grid(True, color=get_chart_border(), alpha=0.55, linewidth=0.5,
+                linestyle="--")
+
+    # Keep old name as alias so any existing call sites don't break
+    _apply_dark_style = _style_axes
+
+    def apply_theme(self):
+        """Update canvas and axes colours when the global theme changes."""
+        chart_bg = get_chart_bg()
+        self.fig.patch.set_facecolor(chart_bg)
+        self.canvas.setStyleSheet(f"background-color: {chart_bg};")
+        self._style_axes()
+        self.canvas.draw()
     
     def _on_process_clicked(self):
         """Detect peaks when button clicked."""
@@ -382,11 +397,11 @@ class Step2Widget(QWidget):
             self.axes.set_ylabel("Intensity")
             self.axes.set_title("Detected Peaks")
             leg = self.axes.legend(loc="upper right", fontsize=8, framealpha=0.6)
-            leg.get_frame().set_facecolor(C_BG_RAISED)
-            leg.get_frame().set_edgecolor(C_BORDER_SUBTLE)
+            leg.get_frame().set_facecolor(get_chart_axes_bg())
+            leg.get_frame().set_edgecolor(get_chart_border())
             for txt in leg.get_texts():
-                txt.set_color(C_TEXT2)
-            self._apply_dark_style()
+                txt.set_color(get_chart_text2())
+            self._style_axes()
             self.fig.tight_layout(pad=1.2)
             self.canvas.draw()
             self.toolbar.home()
