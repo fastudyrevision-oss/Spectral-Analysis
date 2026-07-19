@@ -608,6 +608,35 @@ def primary_button_style(color: str = C_ACCENT) -> str:
     )
 
 
+def secondary_button_style(color: str = C_BORDER) -> str:
+    """Secondary / ghost button — outlined, no fill."""
+    text_colour = C_TEXT if is_dark() else L_TEXT
+    return (
+        f"QPushButton {{"
+        f"  background-color: transparent;"
+        f"  color: {text_colour};"
+        f"  border: 1px solid {color};"
+        f"  border-radius: 6px;"
+        f"  padding: 6px 16px;"
+        f"  font-weight: 600;"
+        f"  font-size: 9pt;"
+        f"  min-height: 28px;"
+        f"}}"
+        f"QPushButton:hover {{"
+        f"  background-color: rgba(63,169,245,0.10);"
+        f"  border-color: {C_ACCENT};"
+        f"  color: {C_ACCENT};"
+        f"}}"
+        f"QPushButton:pressed {{"
+        f"  background-color: rgba(63,169,245,0.18);"
+        f"}}"
+        f"QPushButton:disabled {{"
+        f"  color: {C_TEXT_MUTED};"
+        f"  border-color: {C_BORDER_SUBTLE};"
+        f"}}"
+    )
+
+
 def instruction_banner_style() -> str:
     """Instruction banner — low-contrast info block."""
     if is_dark():

@@ -15,6 +15,7 @@ import logging
 import math
 from collections import Counter, defaultdict
 
+import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
@@ -37,6 +38,26 @@ TIER_BINS:    list[float] = [0.0, 0.50, 0.70, 0.90, 1.0]
 TIER_COLOURS: list[str]  = [C_ERROR, C_WARN, C_ACCENT, C_SUCCESS]   # Weak→Excellent
 TIER_LABELS:  list[str]  = ["Weak\n(VC<0.50)", "Moderate\n(0.50–0.69)",
                              "Good\n(0.70–0.89)", "Excellent\n(VC≥0.90)"]
+
+# Constants for render_performance_metrics (Fig 14 style)
+METRIC_LABELS_PERC: list[str] = ["Accuracy", "Precision", "Recall", "F1-Score"]
+METRIC_KEYS_PERC:   list[str] = ["accuracy", "precision", "recall", "f1_score"]
+
+# Pipeline funnel stage constants (Requirement 6 / Figure 11)
+STAGE_LABELS: list[str] = [
+    "① Detected Peaks",
+    "② NIST Matched",
+    "③ Element Ranked",
+    "④ Validated (VC≥0.50)",
+    "⑤ Confirmed (VC≥0.70)",
+]
+STAGE_KEYS: list[str] = [
+    "stage1_detected",
+    "stage2_nist_matched",
+    "stage3_ranked",
+    "stage4_validated",
+    "stage5_confirmed",
+]
 
 _MPL_EXTRA = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
@@ -391,6 +412,87 @@ class ChartEngine:
             ChartEngine.apply_dark_style(fig, ax)
 
     # ------------------------------------------------------------------
+    # Step 6 charts
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def render_element_ranking_fig7(ax: Axes, ranking_df: pd.DataFrame | None) -> None:
+        """Horizontal bar chart of elemental preference ranking (Figure 7 style).
+
+        Bars are colour-coded by confidence tier:
+          C_SUCCESS (green)  — matched_lines >= 10  (High)
+          C_WARN    (orange) — 3 <= matched_lines <= 9  (Medium)
+          C_ERROR   (red)    — matched_lines < 3  (Low)
+
+        Requirements 5.1 – 5.7
+        """
+        ax.clear()
+        fig = ax.get_figure()
+        try:
+            if ranking_df is None or ranking_df.empty:
+                ChartEngine._show_placeholder(ax, "No ranking data available")
+                ChartEngine.apply_dark_style(fig, ax)
+                return
+
+            # Sort descending by Wins so the dominant element is at top
+            df = ranking_df.sort_values(by="Wins", ascending=False).reset_index(drop=True)
+
+            # barh draws bottom-to-top, so reverse the df so the top entry
+            # appears at the top visually.
+            df_plot = df.iloc[::-1].reset_index(drop=True)
+            elements = df_plot["Element"].tolist()
+            wins = df_plot["Wins"].tolist()
+
+            # Assign tier colours
+            def _tier_colour(w: int) -> str:
+                if w >= 10:
+                    return C_SUCCESS
+                if w >= 3:
+                    return C_WARN
+                return C_ERROR
+
+            colours = [_tier_colour(w) for w in wins]
+
+            bars = ax.barh(elements, wins, color=colours, edgecolor="none", height=0.65)
+            x_max = max(wins) if wins else 1
+
+            # Numeric count labels at the right end of each bar
+            for bar, val in zip(bars, wins):
+                ax.text(
+                    bar.get_width() + x_max * 0.02,
+                    bar.get_y() + bar.get_height() / 2.0,
+                    str(int(val)),
+                    va="center", ha="left", color=C_TEXT, fontsize=8,
+                    fontweight="bold",
+                )
+
+            ax.set_xlim(0, x_max * 1.18)
+            ax.set_xlabel("Matched Lines (Wins)", color=C_TEXT)
+            ax.set_title("Elemental Preference Ranking", color=C_TEXT)
+
+            # Scale Y-tick font by number of elements to prevent overlap
+            tick_fs = max(6, min(9, 120 // max(len(df_plot), 1)))
+            ax.tick_params(axis="y", labelsize=tick_fs)
+
+            # Legend with three confidence-tier entries
+            import matplotlib.patches as mpatches
+            legend_handles = [
+                mpatches.Patch(color=C_SUCCESS, label="High (≥10)"),
+                mpatches.Patch(color=C_WARN,    label="Medium (3–9)"),
+                mpatches.Patch(color=C_ERROR,   label="Low (<3)"),
+            ]
+            ax.legend(handles=legend_handles, loc="lower right", fontsize=8)
+            _style_legend(ax)
+
+            _finish(fig, ax)
+
+        except Exception:
+            logger.exception("render_element_ranking_fig7 failed")
+            ax.clear()
+            ChartEngine._show_placeholder(ax, "Chart unavailable")
+            ChartEngine.apply_dark_style(fig, ax)
+
+    # ------------------------------------------------------------------
     # Step 3 charts
     # ------------------------------------------------------------------
 
@@ -471,6 +573,408 @@ class ChartEngine:
         except Exception:
             logger.exception("render_match_score_scatter failed")
             ax.clear()
+            ChartEngine._show_placeholder(ax, "Chart unavailable")
+            ChartEngine.apply_dark_style(fig, ax)
+
+    # ------------------------------------------------------------------
+    # Step 6 charts
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def render_correlation_heatmap(
+        ax: Axes,
+        heatmap_matrix,
+        peak_labels: list,
+        element_labels: list,
+    ) -> None:
+        """Correlation heatmap: peaks × elements, coolwarm colormap (Step 6 / Figure 12)."""
+        ax.clear()
+        fig = ax.get_figure()
+        try:
+            if (heatmap_matrix is None
+                    or not hasattr(heatmap_matrix, "shape")
+                    or heatmap_matrix.shape[0] < 2
+                    or heatmap_matrix.shape[1] < 2):
+                ChartEngine._show_placeholder(ax, "Insufficient heatmap data")
+                ChartEngine.apply_dark_style(fig, ax)
+                return
+
+            im = ax.imshow(heatmap_matrix, aspect="auto", cmap="coolwarm",
+                           vmin=0.0, vmax=1.0)
+            cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label("Correlation Score", color=get_chart_text2(), fontsize=8)
+            cbar.ax.tick_params(colors=get_chart_text2(), labelsize=7)
+            cbar.ax.yaxis.set_tick_params(color=get_chart_text2())
+
+            n_rows, n_cols = heatmap_matrix.shape
+            for i in range(n_rows):
+                for j in range(n_cols):
+                    val = heatmap_matrix[i, j]
+                    text_colour = "#FFFFFF" if val >= 0.5 else C_BG_DEEP
+                    ax.text(j, i, f"{val:.2f}",
+                            ha="center", va="center",
+                            color=text_colour, fontsize=7, fontweight="bold")
+
+            ax.set_yticks(range(n_rows))
+            ax.set_yticklabels(peak_labels, fontsize=7)
+            ax.set_xticks(range(n_cols))
+            ax.set_xticklabels(element_labels, fontsize=8, rotation=45, ha="right")
+            ax.set_title("Correlation Heatmap", color=get_chart_text(),
+                         fontsize=10, fontweight="bold")
+            _finish(fig, ax)
+        except Exception:
+            logger.exception("render_correlation_heatmap failed")
+            ax.clear()
+            ChartEngine._show_placeholder(ax, "Chart unavailable")
+            ChartEngine.apply_dark_style(fig, ax)
+
+    # ------------------------------------------------------------------
+    # Step 6 charts
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def render_element_ranking_fig7(ax: Axes, ranking_df: "pd.DataFrame | None") -> None:
+        """Figure 7 style — horizontal bar chart of matched line counts per element,
+        colour-coded by confidence tier (High/Medium/Low).  Requirement 5.
+        """
+        ax.clear()
+        fig = ax.get_figure()
+        try:
+            if ranking_df is None or (hasattr(ranking_df, "empty") and ranking_df.empty):
+                ChartEngine._show_placeholder(ax, "No ranking data available")
+                ChartEngine.apply_dark_style(fig, ax)
+                return
+
+            df = ranking_df.copy()
+            if "Wins" not in df.columns:
+                ChartEngine._show_placeholder(ax, "No ranking data available")
+                ChartEngine.apply_dark_style(fig, ax)
+                return
+
+            df = df.sort_values("Wins", ascending=False).reset_index(drop=True)
+            # barh draws bottom-to-top; reverse so top row = highest wins
+            df_plot = df.iloc[::-1].reset_index(drop=True)
+
+            elements = df_plot["Element"].tolist()
+            wins     = df_plot["Wins"].tolist()
+
+            # Colour by confidence tier (Requirements 5.2–5.4)
+            def _tier_colour(w: int) -> str:
+                if w >= 10:
+                    return C_SUCCESS
+                if w >= 3:
+                    return C_WARN
+                return C_ERROR
+
+            colours = [_tier_colour(int(w)) for w in wins]
+
+            bars  = ax.barh(elements, wins, color=colours, edgecolor="none", height=0.65)
+            x_max = max(wins) if wins else 1
+            for bar, val in zip(bars, wins):
+                ax.text(
+                    bar.get_width() + x_max * 0.02,
+                    bar.get_y() + bar.get_height() / 2.0,
+                    str(int(val)),
+                    va="center", ha="left", color=C_TEXT, fontsize=8,
+                    fontweight="bold",
+                )
+
+            # Legend for three tiers (Requirement 5.6)
+            from matplotlib.patches import Patch
+            legend_elements = [
+                Patch(facecolor=C_SUCCESS, label="High ≥ 10"),
+                Patch(facecolor=C_WARN,    label="Medium 3–9"),
+                Patch(facecolor=C_ERROR,   label="Low < 3"),
+            ]
+            ax.legend(handles=legend_elements, loc="lower right",
+                      fontsize=7.5, framealpha=0.6)
+            _style_legend(ax)
+
+            ax.set_xlabel("Matched Lines", color=C_TEXT)
+            ax.set_title("Elemental Preference Ranking", color=C_TEXT,
+                         fontsize=10, fontweight="bold")
+            ax.set_xlim(0, x_max * 1.22)
+            tick_fs = max(6, min(9, 120 // max(len(df_plot), 1)))
+            ax.tick_params(axis="y", labelsize=tick_fs)
+            _finish(fig, ax)
+
+        except Exception:
+            logger.exception("render_element_ranking_fig7 failed")
+            ax.clear()
+            ChartEngine._show_placeholder(ax, "Chart unavailable")
+            ChartEngine.apply_dark_style(fig, ax)
+
+    @staticmethod
+    def render_pipeline_funnel(ax: Axes, stage_counts: "dict | None") -> None:
+        """Modern Funnel Diagram for the multi-stage validation pipeline.
+
+        Draws centred trapezoid shapes that narrow at each stage, with the
+        stage name, peak count, and reduction annotation inside/below each
+        shape.  Layout matches the requested design:
+
+            350 ┌────────────────┐  Detected Peaks
+                ↓ Reduction x%
+            180 ┌──────────────┐   NIST Match
+                ↓ ...
+        """
+        ax.clear()
+        fig = ax.get_figure()
+        try:
+            # ── Guard ────────────────────────────────────────────────────────
+            if stage_counts is None:
+                ChartEngine._show_placeholder(ax, "Insufficient pipeline data")
+                ChartEngine.apply_dark_style(fig, ax)
+                return
+
+            counts = [stage_counts.get(k, 0) for k in STAGE_KEYS]
+            non_zero = sum(1 for c in counts if c > 0)
+            if non_zero < 2:
+                ChartEngine._show_placeholder(ax, "Insufficient pipeline data")
+                ChartEngine.apply_dark_style(fig, ax)
+                return
+
+            import matplotlib.patches as mpatches
+            import matplotlib.colors as mcolors
+
+            n = len(STAGE_KEYS)
+
+            # Short display names for the funnel boxes
+            FUNNEL_NAMES = [
+                "Detected Peaks",
+                "NIST Match",
+                "Ranking",
+                "Pure",
+                "Bayesian",
+            ]
+
+            # --- colour gradient (accent → accent2) -------------------------
+            rgb1 = mcolors.to_rgb(C_ACCENT)
+            rgb2 = mcolors.to_rgb(C_ACCENT2)
+
+            def _lerp(t: float) -> tuple:
+                return tuple(rgb1[i] + (rgb2[i] - rgb1[i]) * t for i in range(3))
+
+            colours = [_lerp(i / (n - 1)) for i in range(n)]
+
+            # --- layout constants -------------------------------------------
+            # Each funnel stage occupies a vertical slot of height SLOT_H.
+            # The gap between slots (for the arrow + reduction text) is GAP_H.
+            SLOT_H = 1.0        # height of each trapezoid
+            GAP_H  = 0.55       # gap between stages for arrow + text
+            TOTAL_H = n * SLOT_H + (n - 1) * GAP_H
+
+            # Widths: the widest box = MAX_W, narrowing proportionally to count
+            max_count = max(counts) if any(c > 0 for c in counts) else 1
+            MAX_W = 0.80        # fraction of axes width
+            MIN_W = 0.25        # minimum fraction so tiny counts are still visible
+
+            def _width(count: int) -> float:
+                ratio = count / max_count if max_count > 0 else 0
+                return MIN_W + (MAX_W - MIN_W) * ratio
+
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, TOTAL_H)
+            ax.axis("off")
+            fig.patch.set_facecolor(get_chart_bg())
+            ax.set_facecolor(get_chart_axes_bg())
+
+            for i, (count, colour, name) in enumerate(zip(counts, colours, FUNNEL_NAMES)):
+                # y-coordinate of this stage's bottom edge
+                # Stages drawn top-to-bottom: stage 0 at top
+                slot_top = TOTAL_H - i * (SLOT_H + GAP_H)
+                slot_bot = slot_top - SLOT_H
+
+                w_top = _width(count)
+                # The bottom edge narrows slightly relative to the top to give
+                # a true trapezoid feel.  Use the next stage's width as the
+                # bottom, unless it's the last stage.
+                if i < n - 1:
+                    w_bot = _width(counts[i + 1])
+                else:
+                    w_bot = w_top * 0.85
+
+                cx = 0.5  # centre x
+
+                # Trapezoid vertices (bottom-left, bottom-right, top-right, top-left)
+                xs = [cx - w_bot / 2, cx + w_bot / 2,
+                      cx + w_top / 2, cx - w_top / 2]
+                ys = [slot_bot, slot_bot, slot_top, slot_top]
+
+                trap = mpatches.Polygon(
+                    list(zip(xs, ys)),
+                    closed=True,
+                    facecolor=colour,
+                    edgecolor=get_chart_bg(),
+                    linewidth=1.5,
+                    zorder=3,
+                )
+                ax.add_patch(trap)
+
+                # Count label (large, centred in box)
+                mid_y = (slot_top + slot_bot) / 2.0
+                ax.text(
+                    cx, mid_y + 0.12,
+                    str(int(count)),
+                    ha="center", va="center",
+                    color="#FFFFFF",
+                    fontsize=13, fontweight="bold",
+                    zorder=4,
+                )
+                # Stage name below the count
+                ax.text(
+                    cx, mid_y - 0.18,
+                    name,
+                    ha="center", va="center",
+                    color="#FFFFFF",
+                    fontsize=8,
+                    zorder=4,
+                )
+
+                # Arrow + reduction annotation between this and next stage
+                if i < n - 1:
+                    arrow_y_top = slot_bot
+                    arrow_y_bot = slot_bot - GAP_H
+                    arrow_mid_y = (arrow_y_top + arrow_y_bot) / 2.0
+
+                    ax.annotate(
+                        "",
+                        xy=(cx, arrow_y_bot + 0.04),
+                        xytext=(cx, arrow_y_top - 0.04),
+                        arrowprops=dict(
+                            arrowstyle="-|>",
+                            color=get_chart_text2(),
+                            lw=1.5,
+                        ),
+                        zorder=5,
+                    )
+
+                    prev = counts[i]
+                    nxt  = counts[i + 1]
+                    if prev > 0 and nxt < prev:
+                        reduction_pct = (prev - nxt) / prev * 100.0
+                        red_label = f"Reduction {reduction_pct:.1f}%"
+                    elif prev > 0 and nxt >= prev:
+                        red_label = "No reduction"
+                    else:
+                        red_label = ""
+
+                    if red_label:
+                        ax.text(
+                            cx + 0.03, arrow_mid_y,
+                            red_label,
+                            ha="left", va="center",
+                            color=get_chart_text2(),
+                            fontsize=7.5,
+                            zorder=5,
+                        )
+
+            ax.set_title(
+                "Multi-Stage Validation Pipeline",
+                color=get_chart_text(),
+                fontsize=10, fontweight="bold",
+                pad=6,
+            )
+
+            try:
+                fig.tight_layout(pad=1.0)
+            except Exception:
+                pass
+
+            fig.patch.set_facecolor(get_chart_bg())
+
+        except Exception:
+            logger.exception("render_pipeline_funnel failed")
+            ax.clear()
+            ChartEngine._show_placeholder(ax, "Chart unavailable")
+            ChartEngine.apply_dark_style(fig, ax)
+
+    # ------------------------------------------------------------------
+    # Step 6 charts
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def render_performance_metrics(
+        ax: Axes,
+        metrics_dict: dict,
+        ax2: Axes,
+    ) -> None:
+        """Figure 14 style — Performance Metrics bar chart (Step 6).
+
+        Draws four percentage bars (Accuracy, Precision, Recall, F1-Score) on
+        the primary Y-axis *ax* and a single SBR Improvement bar on the
+        secondary Y-axis *ax2*.
+        """
+        ax.clear()
+        ax2.clear()
+        fig = ax.get_figure()
+        try:
+            # ── four percentage bars on primary axis ──────────────────────
+            x_perc = range(len(METRIC_LABELS_PERC))
+            for i, (label, key) in enumerate(zip(METRIC_LABELS_PERC, METRIC_KEYS_PERC)):
+                val = metrics_dict.get(key) if metrics_dict else None
+                if val is not None:
+                    pct = val * 100
+                    ax.bar(i, pct, color=C_SUCCESS, width=0.55, zorder=3)
+                    ax.text(
+                        i, pct + 1.5, f"{pct:.1f}%",
+                        ha="center", va="bottom",
+                        color=C_TEXT, fontsize=9, fontweight="bold",
+                    )
+                else:
+                    ax.text(
+                        i, 5, "N/A",
+                        ha="center", va="bottom",
+                        color=C_TEXT2, fontsize=9, style="italic",
+                    )
+
+            ax.set_xticks(list(x_perc))
+            ax.set_xticklabels(METRIC_LABELS_PERC, fontsize=9)
+            ax.set_ylim(0, 110)
+            ax.set_ylabel("Score (%)", color=C_TEXT)
+            ax.set_title(
+                "Model Performance Metrics",
+                color=C_TEXT, fontsize=10, fontweight="bold",
+            )
+
+            # ── SBR bar on secondary axis ──────────────────────────────────
+            sbr = metrics_dict.get("sbr_improvement") if metrics_dict else None
+            sbr_x = 4
+            if sbr is not None and not (isinstance(sbr, float) and sbr == float("inf")):
+                ax2.bar(sbr_x, sbr, color=C_ACCENT, width=0.55, zorder=3)
+                ax2.text(
+                    sbr_x, sbr * 1.02 + 0.05, f"{sbr:.2f}×",
+                    ha="center", va="bottom",
+                    color=C_TEXT, fontsize=9, fontweight="bold",
+                )
+            elif sbr == float("inf"):
+                ax2.text(
+                    sbr_x, 1, "∞×",
+                    ha="center", va="bottom",
+                    color=C_ACCENT, fontsize=12, fontweight="bold",
+                )
+            else:
+                ax2.text(
+                    sbr_x, 0.1, "N/A",
+                    ha="center", va="bottom",
+                    color=C_TEXT2, fontsize=9, style="italic",
+                )
+
+            ax2.set_ylabel("SBR Improvement (×)", color=C_TEXT)
+            ax2.tick_params(colors=get_chart_text2(), labelsize=8)
+
+            # Extend x-range to include the SBR position; share labels with ax
+            all_labels = METRIC_LABELS_PERC + ["SBR"]
+            ax.set_xticks(list(range(5)))
+            ax.set_xticklabels(all_labels, fontsize=9)
+            ax.set_xlim(-0.6, 4.6)
+            ax2.set_xlim(-0.6, 4.6)
+
+            _finish(fig, ax)
+
+        except Exception:
+            logger.exception("render_performance_metrics failed")
+            ax.clear()
+            ax2.clear()
             ChartEngine._show_placeholder(ax, "Chart unavailable")
             ChartEngine.apply_dark_style(fig, ax)
 

@@ -21,6 +21,7 @@ from src.gui.step2_widget import Step2Widget
 from src.gui.step3_widget import Step3Widget
 from src.gui.step4_widget import Step4Widget
 from src.gui.step5_widget import Step5Widget
+from src.gui.step6_widget import Step6Widget
 from src.gui.summary_widget import SummaryWidget
 from src.gui.gui_utils import NotesPanel, FileHistory
 from src.gui.theme import APP_STYLESHEET, LIGHT_STYLESHEET, FONT_FAMILY_UI, FONT_SIZE_BASE
@@ -61,6 +62,15 @@ class SpectralAnalysisApp(QMainWindow):
         self.step3_tab = Step3Widget(file_history=self.file_history, notes_panel=self.notes_panel)
         self.step4_tab = Step4Widget(file_history=self.file_history, notes_panel=self.notes_panel)
         self.step5_tab = Step5Widget(file_history=self.file_history, notes_panel=self.notes_panel)
+        self.step6_tab = Step6Widget(
+            step2_tab=self.step2_tab,
+            step3_tab=self.step3_tab,
+            step4_tab=self.step4_tab,
+            step5_tab=self.step5_tab,
+            step1_tab=self.step1_tab,
+            file_history=self.file_history,
+            notes_panel=self.notes_panel,
+        )
 
         # Create summary dashboard (read-only, fed by step widgets)
         self.summary_tab = SummaryWidget(
@@ -77,6 +87,7 @@ class SpectralAnalysisApp(QMainWindow):
         self.tabs.addTab(self.step3_tab, "③ Step 3: Element Identification")
         self.tabs.addTab(self.step4_tab, "④ Step 4: Elemental Preferences")
         self.tabs.addTab(self.step5_tab, "⑤ Step 5: Validation")
+        self.tabs.insertTab(5, self.step6_tab, "⑥ Step 6: Model Performance")
         self.tabs.addTab(self.summary_tab, "📊 Analysis Summary")
 
         central_widget = QWidget()
@@ -108,7 +119,40 @@ class SpectralAnalysisApp(QMainWindow):
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.notes_panel.add_note("Application started", "INFO")
 
+        # Restore last session silently
+        self._restore_session()
+
         logger.info("GUI initialization complete")
+
+    def _restore_session(self) -> None:
+        """Silently restore step results from the last session on startup."""
+        try:
+            from src.gui.session_manager import (
+                load_step2, load_step3, load_step4, load_step5,
+            )
+            peaks = load_step2()
+            if peaks:
+                self.step2_tab.detected_peaks = peaks
+                logger.info("Session restored: %d detected peaks (Step 2)", len(peaks))
+
+            matches = load_step3()
+            if matches:
+                self.step3_tab.matches = matches
+                logger.info("Session restored: %d NIST matches (Step 3)", len(matches))
+
+            analysis = load_step4()
+            if analysis:
+                self.step4_tab.analysis_results = analysis
+                logger.info("Session restored: Step 4 analysis results")
+
+            validation = load_step5()
+            if validation is not None:
+                self.step5_tab.validation_results = validation
+                logger.info(
+                    "Session restored: %d validation rows (Step 5)", len(validation)
+                )
+        except Exception:
+            logger.exception("Session restore failed — starting with clean state")
 
     def _on_toggle_theme(self):
         """Switch between dark and light application themes."""
@@ -128,7 +172,7 @@ class SpectralAnalysisApp(QMainWindow):
             logger.info("Switched to light theme")
         # Propagate to all widgets that have inline styles or matplotlib canvases
         for widget in [self.step1_tab, self.step2_tab, self.step3_tab,
-                       self.step4_tab, self.step5_tab, self.summary_tab]:
+                       self.step4_tab, self.step5_tab, self.step6_tab, self.summary_tab]:
             if hasattr(widget, 'apply_theme'):
                 widget.apply_theme()
 
@@ -141,14 +185,16 @@ class SpectralAnalysisApp(QMainWindow):
             "Step 3: Element Identification",
             "Step 4: Elemental Preferences",
             "Step 5: Validation",
+            "Step 6: Model Performance",
             "Analysis Summary",
         ]
         if index < len(tab_names):
             logger.info(f"Switched to: {tab_names[index]}")
             self.statusBar.showMessage(f"Tab: {tab_names[index]}")
 
-        # Refresh summary dashboard whenever user navigates to it
         if index == 5:
+            self.step6_tab.refresh()
+        elif index == 6:
             self.summary_tab.refresh()
 
 

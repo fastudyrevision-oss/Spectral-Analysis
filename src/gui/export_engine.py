@@ -273,6 +273,7 @@ def generate_pdf_report(
     filepath: Path,
     step4_results: dict | None = None,
     ranking_fig: Figure | None = None,
+    step6_metrics: dict | None = None,
 ) -> Path:
     """Generate a comprehensive LIBS Validation Report PDF.
 
@@ -315,6 +316,10 @@ def generate_pdf_report(
     ranking_fig:
         Optional pre-rendered Ranking Chart Figure (used when
         *step4_results* is provided).
+    step6_metrics:
+        Optional dict with Step 6 performance results containing keys:
+        ``accuracy``, ``precision``, ``recall``, ``f1_score``,
+        ``sbr_improvement``, ``element_rows``, ``pipeline_stages``.
 
     Returns
     -------
@@ -591,6 +596,91 @@ def generate_pdf_report(
                 flowables.append(ranking_image)
 
         # ------------------------------------------------------------------ #
+        # 8. Step 6 — Model Performance Metrics (optional)                    #
+        # ------------------------------------------------------------------ #
+        if step6_metrics is not None:
+            flowables.append(Paragraph("Step 6 — Model Performance Metrics", style_h2))
+
+            # Global metrics table
+            def _fmt_pct(v) -> str:
+                if v is None:
+                    return "N/A"
+                try:
+                    return f"{float(v) * 100:.1f}%"
+                except (TypeError, ValueError):
+                    return "N/A"
+
+            sbr_raw = step6_metrics.get("sbr_improvement")
+            if sbr_raw is None:
+                sbr_str = "N/A"
+            elif isinstance(sbr_raw, float) and sbr_raw == float("inf"):
+                sbr_str = "∞×"
+            else:
+                try:
+                    sbr_str = f"{float(sbr_raw):.2f}×"
+                except (TypeError, ValueError):
+                    sbr_str = "N/A"
+
+            global_data = [
+                ["Metric", "Value"],
+                ["Accuracy",  _fmt_pct(step6_metrics.get("accuracy"))],
+                ["Precision", _fmt_pct(step6_metrics.get("precision"))],
+                ["Recall",    _fmt_pct(step6_metrics.get("recall"))],
+                ["F1-Score",  _fmt_pct(step6_metrics.get("f1_score"))],
+                ["SBR Improvement", sbr_str],
+            ]
+            global_table = Table(global_data, colWidths=[9 * cm, 7 * cm])
+            global_table.setStyle(_base_table_style())
+            flowables.append(global_table)
+            flowables.append(Spacer(1, 0.5 * cm))
+
+            # Pipeline stages table
+            pipeline = step6_metrics.get("pipeline_stages") or {}
+            if pipeline:
+                flowables.append(Paragraph("Pipeline Stage Counts", style_h2))
+                pipe_data = [
+                    ["Stage", "Peak Count"],
+                    ["① Detected Peaks",          str(pipeline.get("stage1_detected", 0))],
+                    ["② NIST Matched",            str(pipeline.get("stage2_nist_matched", 0))],
+                    ["③ Element Ranked",          str(pipeline.get("stage3_ranked", 0))],
+                    ["④ Validated (VC ≥ 0.50)",   str(pipeline.get("stage4_validated", 0))],
+                    ["⑤ Confirmed (VC ≥ 0.70)",   str(pipeline.get("stage5_confirmed", 0))],
+                ]
+                pipe_table = Table(pipe_data, colWidths=[11 * cm, 5 * cm])
+                pipe_table.setStyle(_base_table_style())
+                flowables.append(pipe_table)
+                flowables.append(Spacer(1, 0.5 * cm))
+
+            # Per-element summary table
+            element_rows = step6_metrics.get("element_rows") or []
+            if element_rows:
+                flowables.append(Paragraph("Per-Element Summary", style_h2))
+                elem_header = ["Element", "Confidence Tier", "Matched Lines", "Mean VC", "Status"]
+                elem_data = [elem_header]
+                for er in element_rows:
+                    tier = str(er.get("confidence_tier", ""))
+                    if tier == "High":
+                        status = "Confirmed"
+                    elif tier == "Medium":
+                        status = "Probable"
+                    else:
+                        status = "Uncertain"
+                    mean_vc = er.get("mean_vc")
+                    mean_vc_str = f"{float(mean_vc):.4f}" if mean_vc is not None else "N/A"
+                    elem_data.append([
+                        str(er.get("element", "")),
+                        tier,
+                        str(er.get("matched_lines", 0)),
+                        mean_vc_str,
+                        status,
+                    ])
+                elem_col_widths = [3 * cm, 4 * cm, 3.5 * cm, 3.5 * cm, 3 * cm]
+                elem_table = Table(elem_data, colWidths=elem_col_widths)
+                elem_table.setStyle(_base_table_style())
+                flowables.append(elem_table)
+                flowables.append(Spacer(1, 0.4 * cm))
+
+        # ------------------------------------------------------------------ #
         # Build PDF                                                            #
         # ------------------------------------------------------------------ #
         doc.build(flowables)
@@ -600,3 +690,143 @@ def generate_pdf_report(
         raise
 
     return filepath
+
+
+# ---------------------------------------------------------------------------
+# Step 6 CSV / PNG export
+# ---------------------------------------------------------------------------
+
+def export_step6_csv(performance_results, filepath):
+    """Write Step 6 summary CSV (one row per element + aggregate metrics).
+
+    Each row contains the element name, confidence tier, matched lines,
+    mean VC, global Accuracy/Precision/Recall/F1-Score, global
+    SBR_Improvement, and the five Pipeline_Stage counts.
+
+    Requirements: 10.1
+    """
+    from pathlib import Path
+    import pandas as pd
+
+    filepath = Path(filepath)
+
+    try:
+        element_rows = performance_results.get("element_rows", []) or []
+        pipeline = performance_results.get("pipeline_stages") or {}
+
+        rows = []
+        for er in element_rows:
+            rows.append({
+                "Element": er.get("element", ""),
+                "Confidence_Tier": er.get("confidence_tier", ""),
+                "Matched_Lines": er.get("matched_lines", 0),
+                "Mean_VC": er.get("mean_vc"),
+                "Accuracy": performance_results.get("accuracy"),
+                "Precision": performance_results.get("precision"),
+                "Recall": performance_results.get("recall"),
+                "F1_Score": performance_results.get("f1_score"),
+                "SBR_Improvement": performance_results.get("sbr_improvement"),
+                "Pipeline_Stage_1": pipeline.get("stage1_detected", 0),
+                "Pipeline_Stage_2": pipeline.get("stage2_nist_matched", 0),
+                "Pipeline_Stage_3": pipeline.get("stage3_ranked", 0),
+                "Pipeline_Stage_4": pipeline.get("stage4_validated", 0),
+                "Pipeline_Stage_5": pipeline.get("stage5_confirmed", 0),
+            })
+
+        if not rows:
+            # Write a header-only CSV if no element rows
+            rows = [{
+                "Element": "", "Confidence_Tier": "", "Matched_Lines": 0,
+                "Mean_VC": None,
+                "Accuracy": performance_results.get("accuracy"),
+                "Precision": performance_results.get("precision"),
+                "Recall": performance_results.get("recall"),
+                "F1_Score": performance_results.get("f1_score"),
+                "SBR_Improvement": performance_results.get("sbr_improvement"),
+                "Pipeline_Stage_1": pipeline.get("stage1_detected", 0),
+                "Pipeline_Stage_2": pipeline.get("stage2_nist_matched", 0),
+                "Pipeline_Stage_3": pipeline.get("stage3_ranked", 0),
+                "Pipeline_Stage_4": pipeline.get("stage4_validated", 0),
+                "Pipeline_Stage_5": pipeline.get("stage5_confirmed", 0),
+            }]
+
+        df = pd.DataFrame(rows)
+        df.to_csv(filepath, index=False)
+        return filepath
+    except OSError:
+        # Remove partial file, then re-raise
+        try:
+            filepath.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
+
+def export_step6_png(figures, filepath, dpi=150):
+    """Composite PNG of all four Step 6 charts (2 × 2 grid).
+
+    Renders each source figure into a buffer, composites them into a 2×2
+    grid figure saved with C_BG_DEEP facecolor, then restores each source
+    figure's original facecolor.  Removes the partial file on OSError
+    before re-raising.
+
+    Requirements: 10.2
+    """
+    from pathlib import Path
+    import io
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.image import imread as mpl_imread
+
+    filepath = Path(filepath)
+
+    orig_facecolors: list = []
+    try:
+        # Create a 2×2 composite figure
+        composite_fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        composite_fig.patch.set_facecolor(C_BG_DEEP)
+
+        flat_axes = axes.flatten()
+
+        for i, (src_fig, ax) in enumerate(zip(figures[:4], flat_axes)):
+            # Save original facecolor so we can restore it afterwards
+            orig_fc = src_fig.get_facecolor()
+            orig_facecolors.append((src_fig, orig_fc))
+
+            # Render src_fig to an in-memory buffer and display in composite
+            src_fig.patch.set_facecolor(C_BG_DEEP)
+            buf = io.BytesIO()
+            src_fig.savefig(buf, format="png", dpi=dpi,
+                            facecolor=C_BG_DEEP, bbox_inches="tight")
+            buf.seek(0)
+            img_data = mpl_imread(buf)
+            ax.imshow(img_data)
+            ax.axis("off")
+
+        # Hide any unused axes (when fewer than 4 figures supplied)
+        for j in range(len(figures), 4):
+            flat_axes[j].axis("off")
+
+        composite_fig.tight_layout(pad=0.5)
+        composite_fig.savefig(filepath, dpi=dpi, facecolor=C_BG_DEEP,
+                               bbox_inches="tight")
+        plt.close(composite_fig)
+
+        # Restore original facecolors
+        for src_fig, orig_fc in orig_facecolors:
+            src_fig.patch.set_facecolor(orig_fc)
+
+        return filepath
+
+    except OSError:
+        try:
+            filepath.unlink(missing_ok=True)
+        except Exception:
+            pass
+        # Restore facecolors even on error
+        for src_fig, orig_fc in orig_facecolors:
+            try:
+                src_fig.patch.set_facecolor(orig_fc)
+            except Exception:
+                pass
+        raise

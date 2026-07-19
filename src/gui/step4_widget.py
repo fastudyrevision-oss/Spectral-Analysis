@@ -354,6 +354,11 @@ class Step4Widget(QWidget):
         self.export_csv_button.setEnabled(True)
         self.export_png_button.setEnabled(True)
         self.progress_bar.hide()
+        try:
+            from src.gui.session_manager import save_step4
+            save_step4(self.analysis_results)
+        except Exception:
+            pass
         if self.notes_panel:
             primary = self.analysis_results.get('primary_element', 'Unknown')
             self.notes_panel.add_note(

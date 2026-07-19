@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
     QScrollArea, QSizePolicy, QFrame, QGridLayout,
     QTableWidget, QTableWidgetItem, QHeaderView, QSplitter,
+    QPushButton,
 )
 from PyQt6.QtGui import QFont
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
@@ -29,7 +30,7 @@ from src.gui.theme import (
     C_ACCENT, C_ACCENT2, C_SUCCESS, C_WARN, C_ERROR,
     C_BG_DEEP, C_BG_CARD, C_BG_INPUT, C_BG_PANEL,
     C_TEXT, C_TEXT2, C_TEXT_MUTED, C_BORDER,
-    step_title_font, summary_banner_style,
+    step_title_font, summary_banner_style, secondary_button_style,
 )
 
 if TYPE_CHECKING:
@@ -154,10 +155,27 @@ class SummaryWidget(QWidget):
         content_layout.setContentsMargins(12, 12, 12, 12)
         content_layout.setSpacing(14)
 
-        # ── Title ─────────────────────────────────────────────────────────
+        # ── Title + action buttons row ────────────────────────────────────
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+
         title = QLabel("📊  Analysis Summary")
         title.setStyleSheet(step_title_font(14))
-        content_layout.addWidget(title)
+        title_row.addWidget(title, stretch=1)
+
+        self._reload_button = QPushButton("↻  Reload Data")
+        self._reload_button.setToolTip("Re-read all step results and refresh the dashboard")
+        self._reload_button.setStyleSheet(secondary_button_style())
+        self._reload_button.clicked.connect(self.refresh)
+        title_row.addWidget(self._reload_button)
+
+        self._clear_button = QPushButton("✕  Clear")
+        self._clear_button.setToolTip("Reset all charts and tables to their placeholder state")
+        self._clear_button.setStyleSheet(secondary_button_style())
+        self._clear_button.clicked.connect(self._clear)
+        title_row.addWidget(self._clear_button)
+
+        content_layout.addLayout(title_row)
 
         subtitle = QLabel(
             "A consolidated overview of all five analysis steps.  "
@@ -349,6 +367,37 @@ class SummaryWidget(QWidget):
         self._refresh_step4()
         self._refresh_step5()
         self._refresh_conclusions()
+
+    def _clear(self):
+        """Reset all charts and tables to placeholder state without re-reading data."""
+        self._show_all_placeholders()
+
+        # Reset stat cards
+        for lbl, default in [
+            (self._card_peaks,    "—"),
+            (self._card_elements, "—"),
+            (self._card_primary,  "—"),
+            (self._card_mean_vc,  "—"),
+        ]:
+            if lbl is not None:
+                lbl.setText(default)
+
+        # Reset Step 1 stats label
+        self._s1_stats_lbl.setText("No baseline correction data available.")
+
+        # Clear tables
+        for table in (self._peaks_table, self._rank_table, self._vc_table):
+            table.setSortingEnabled(False)
+            table.setRowCount(0)
+            table.setSortingEnabled(True)
+
+        # Reset conclusions
+        self._conclusions_lbl.setText(
+            "Run all five analysis steps, then navigate back to this tab "
+            "to see an automated summary of key findings."
+        )
+
+        logger.debug("Analysis Summary cleared")
 
     # ── Step 1 ────────────────────────────────────────────────────────────
 

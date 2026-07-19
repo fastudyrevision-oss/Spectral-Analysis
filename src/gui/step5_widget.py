@@ -455,6 +455,11 @@ class Step5Widget(QWidget):
                 })
 
             self.validation_results = pd.DataFrame(results_rows)
+            try:
+                from src.gui.session_manager import save_step5
+                save_step5(self.validation_results)
+            except Exception:
+                pass
             return True, "Validation completed successfully"
         except Exception as e:
             logger.error(f"Validation failed: {e}")

@@ -379,6 +379,11 @@ class Step3Widget(QWidget):
         self.matches = result.get('result')
         if self.matches:
             logger.info(f"Matching complete: {len(self.matches)} results")
+            try:
+                from src.gui.session_manager import save_step3
+                save_step3(self.matches)
+            except Exception:
+                pass
             self._update_table()
             self._update_charts()
             identified = [m for m in self.matches if m.element]
@@ -417,6 +422,11 @@ class Step3Widget(QWidget):
             ))
 
         logger.info(f"Multi-DB matching complete: {len(self.matches)} results")
+        try:
+            from src.gui.session_manager import save_step3
+            save_step3(self.matches)
+        except Exception:
+            pass
         self._update_table()
         self._update_charts()
         identified = [m for m in self.matches if m.element]

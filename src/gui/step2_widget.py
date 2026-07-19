@@ -375,6 +375,11 @@ class Step2Widget(QWidget):
         
         if self.detected_peaks:
             logger.info(f"Peaks detection complete: {len(self.detected_peaks)} peaks")
+            try:
+                from src.gui.session_manager import save_step2
+                save_step2(self.detected_peaks)
+            except Exception:
+                pass
             
             # Extract peak data
             peak_wl = np.array([p.wavelength for p in self.detected_peaks])
