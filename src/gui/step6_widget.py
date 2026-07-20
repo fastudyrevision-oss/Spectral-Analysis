@@ -250,7 +250,7 @@ class Step6Widget(QWidget):
         self.summary_table = self._create_summary_table()
         splitter.addWidget(self.summary_table)
 
-        splitter.setSizes([520, 180])
+        splitter.setSizes([440, 260])
         layout.addWidget(splitter)
         return panel
 
@@ -266,16 +266,28 @@ class Step6Widget(QWidget):
         return container
 
     def _create_summary_table(self) -> QTableWidget:
-        """Create the per-element summary QTableWidget."""
+        """Create the per-element summary QTableWidget (8 columns)."""
         t = QTableWidget()
-        t.setColumnCount(5)
-        t.setHorizontalHeaderLabels(
-            ["Element", "Confidence Tier", "Matched Lines", "Mean VC", "Status"]
-        )
-        t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        t.setColumnCount(8)
+        t.setHorizontalHeaderLabels([
+            "Element",
+            "Confidence Tier",
+            "Status",
+            "Matched Lines",
+            "Mean VC",
+            "Avg Δλ (nm)",
+            "Avg Score",
+            "Best Lines (nm)",
+        ])
+        hdr = t.horizontalHeader()
+        # Let the last column stretch; all others resize to content
+        for col in range(7):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         t.setAlternatingRowColors(True)
         t.setSortingEnabled(False)
-        # Populate placeholder row
+        t.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        t.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._set_table_placeholder(t)
         return t
 
@@ -534,7 +546,7 @@ class Step6Widget(QWidget):
     # ------------------------------------------------------------------
 
     def _populate_summary_table(self) -> None:
-        """Fill the summary table with per-element rows from performance_results."""
+        """Fill the 8-column summary table with colour-coded per-element rows."""
         if self.performance_results is None:
             self._set_table_placeholder(self.summary_table)
             return
@@ -544,52 +556,141 @@ class Step6Widget(QWidget):
             self._set_table_placeholder(self.summary_table)
             return
 
+        # ── Colour palette ─────────────────────────────────────────────
+        # Tier / status backgrounds
+        TIER_COLOURS = {
+            "High":   (C_SUCCESS,  "#FFFFFF"),
+            "Medium": (C_WARN,     "#1A1A1A"),
+            "Low":    (C_ERROR,    "#FFFFFF"),
+        }
+        STATUS_COLOURS = {
+            "Confirmed": (C_SUCCESS, "#FFFFFF"),
+            "Probable":  (C_WARN,    "#1A1A1A"),
+            "Uncertain": (C_ERROR,   "#FFFFFF"),
+        }
+
+        def _vc_colour(vc: float | None) -> tuple[str, str]:
+            """Return (bg, fg) for a VC value."""
+            if vc is None:
+                return ("#2A2D3A", C_TEXT2)
+            v = float(vc)
+            if v >= 0.70:  return (C_SUCCESS, "#FFFFFF")
+            if v >= 0.50:  return (C_WARN,    "#1A1A1A")
+            if v >= 0.0:   return ("#2A3A2A",  C_TEXT2)
+            return              (C_ERROR,   "#FFFFFF")   # negative VC
+
+        def _delta_colour(d: float | None) -> tuple[str, str]:
+            """Green for tight match, yellow for moderate, red for loose."""
+            if d is None:
+                return ("#2A2D3A", C_TEXT2)
+            if d <= 0.05:  return (C_SUCCESS, "#FFFFFF")
+            if d <= 0.15:  return (C_WARN,    "#1A1A1A")
+            return              (C_ERROR,   "#FFFFFF")
+
+        def _score_colour(s: float | None, max_s: float) -> tuple[str, str]:
+            """Relative colouring: top third green, middle yellow, bottom red."""
+            if s is None or max_s == 0:
+                return ("#2A2D3A", C_TEXT2)
+            ratio = s / max_s
+            if ratio >= 0.67:  return (C_SUCCESS, "#FFFFFF")
+            if ratio >= 0.33:  return (C_WARN,    "#1A1A1A")
+            return                  (C_ERROR,   "#FFFFFF")
+
+        def _matched_colour(n: int) -> tuple[str, str]:
+            if n >= 10:  return (C_SUCCESS, "#FFFFFF")
+            if n >= 3:   return (C_WARN,    "#1A1A1A")
+            return            (C_ERROR,   "#FFFFFF")
+
+        def _coloured_item(text: str, bg: str, fg: str) -> QTableWidgetItem:
+            item = QTableWidgetItem(text)
+            item.setBackground(QColor(bg))
+            item.setForeground(QColor(fg))
+            item.setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+            )
+            return item
+
+        # Pre-compute max score for relative colouring
+        all_scores = [
+            er.get("avg_score") for er in element_rows
+            if er.get("avg_score") is not None
+        ]
+        max_score = max(all_scores) if all_scores else 1.0
+
         self.summary_table.setSortingEnabled(False)
         self.summary_table.setRowCount(len(element_rows))
+        self.summary_table.setRowHeight(0, 28)   # set default row height
 
         for row_idx, er in enumerate(element_rows):
-            element = str(er.get("element", ""))
-            tier = str(er.get("confidence_tier", ""))
-            matched = er.get("matched_lines", 0)
-            mean_vc = er.get("mean_vc")
+            element  = str(er.get("element", ""))
+            tier     = str(er.get("confidence_tier", "Low"))
+            matched  = er.get("matched_lines", 0)
+            mean_vc  = er.get("mean_vc")
+            avg_d    = er.get("avg_delta")
+            avg_s    = er.get("avg_score")
+            best_wls = er.get("best_lines") or []
 
-            # Determine status from tier
-            if tier == "High":
-                status = "Confirmed"
-                tier_bg = C_SUCCESS
-            elif tier == "Medium":
-                status = "Probable"
-                tier_bg = C_WARN
+            # Status from tier
+            status = {"High": "Confirmed", "Medium": "Probable"}.get(tier, "Uncertain")
+
+            tier_bg,   tier_fg   = TIER_COLOURS.get(tier, ("#2A2D3A", C_TEXT2))
+            stat_bg,   stat_fg   = STATUS_COLOURS.get(status, ("#2A2D3A", C_TEXT2))
+            vc_bg,     vc_fg     = _vc_colour(mean_vc)
+            d_bg,      d_fg      = _delta_colour(avg_d)
+            s_bg,      s_fg      = _score_colour(avg_s, max_score)
+            m_bg,      m_fg      = _matched_colour(matched)
+
+            # Format display strings
+            vc_str   = f"{mean_vc:.3f}"  if mean_vc  is not None else "N/A"
+            d_str    = f"{avg_d:.4f}"    if avg_d    is not None else "N/A"
+            # Score: use scientific notation for very large values
+            if avg_s is not None:
+                s_str = f"{avg_s:.3e}" if abs(avg_s) > 1e6 else f"{avg_s:.4f}"
             else:
-                status = "Uncertain"
-                tier_bg = C_ERROR
+                s_str = "N/A"
+            best_str = ",  ".join(f"{w:.2f}" for w in best_wls) if best_wls else "—"
 
-            # Column 0: Element
-            self.summary_table.setItem(row_idx, 0, QTableWidgetItem(element))
-
-            # Column 1: Confidence Tier — colour-coded background
-            tier_item = QTableWidgetItem(tier)
-            try:
-                tier_item.setBackground(QColor(tier_bg))
-                tier_item.setForeground(QColor("#FFFFFF"))
-            except Exception:
-                logger.warning("Step 6: could not set tier cell colour for %s", element)
-                tier_item.setBackground(QColor(C_ERROR))
-            self.summary_table.setItem(row_idx, 1, tier_item)
-
-            # Column 2: Matched Lines
-            self.summary_table.setItem(
-                row_idx, 2, QTableWidgetItem(str(int(matched)))
+            # Col 0: Element name — plain, no colour
+            elem_item = QTableWidgetItem(element)
+            elem_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             )
+            self.summary_table.setItem(row_idx, 0, elem_item)
 
-            # Column 3: Mean VC
-            mean_vc_str = f"{mean_vc:.4f}" if mean_vc is not None else "N/A"
-            self.summary_table.setItem(row_idx, 3, QTableWidgetItem(mean_vc_str))
-
-            # Column 4: Status
-            self.summary_table.setItem(row_idx, 4, QTableWidgetItem(status))
+            # Col 1: Confidence Tier
+            self.summary_table.setItem(
+                row_idx, 1, _coloured_item(tier, tier_bg, tier_fg)
+            )
+            # Col 2: Status
+            self.summary_table.setItem(
+                row_idx, 2, _coloured_item(status, stat_bg, stat_fg)
+            )
+            # Col 3: Matched Lines
+            self.summary_table.setItem(
+                row_idx, 3, _coloured_item(str(int(matched)), m_bg, m_fg)
+            )
+            # Col 4: Mean VC
+            self.summary_table.setItem(
+                row_idx, 4, _coloured_item(vc_str, vc_bg, vc_fg)
+            )
+            # Col 5: Avg Δλ
+            self.summary_table.setItem(
+                row_idx, 5, _coloured_item(d_str, d_bg, d_fg)
+            )
+            # Col 6: Avg Score
+            self.summary_table.setItem(
+                row_idx, 6, _coloured_item(s_str, s_bg, s_fg)
+            )
+            # Col 7: Best Lines — left-aligned, plain text (can be long)
+            best_item = QTableWidgetItem(best_str)
+            best_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
+            best_item.setToolTip(best_str)   # full text on hover
+            self.summary_table.setItem(row_idx, 7, best_item)
 
         self.summary_table.setSortingEnabled(True)
+        self.summary_table.resizeRowsToContents()
 
     @staticmethod
     def _set_table_placeholder(table: QTableWidget) -> None:
@@ -599,7 +700,7 @@ class Step6Widget(QWidget):
         placeholder = QTableWidgetItem("Run Steps 2–5 first")
         placeholder.setForeground(QColor(C_TEXT2))
         table.setItem(0, 0, placeholder)
-        for col in range(1, 5):
+        for col in range(1, 8):
             table.setItem(0, col, QTableWidgetItem(""))
 
     # ------------------------------------------------------------------

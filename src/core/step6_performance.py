@@ -41,6 +41,9 @@ class ElementRow(TypedDict):
     confidence_tier: str          # "High" | "Medium" | "Low"
     matched_lines: int            # proxy: Wins column from Step 4 ranking
     mean_vc: float | None         # mean Validation_Coefficient from Step 5
+    avg_delta: float | None       # mean |Δλ| in nm across matched NIST lines
+    avg_score: float | None       # mean competition score across matched lines
+    best_lines: list[float]       # up to 5 best-matching NIST wavelengths (nm)
 
 
 class PerformanceResults(TypedDict):
@@ -880,16 +883,79 @@ class PerformanceCalculator:
             for e, vals in elem_vc.items()
         }
 
+        # Build per-element match stats from Step 3 matches
+        # avg_delta: mean |Δλ| across all NIST matches for the element
+        # avg_score: mean competition score
+        # best_lines: up to 5 NIST reference wavelengths with highest scores
+        elem_deltas:  dict[str, list[float]] = {}
+        elem_scores:  dict[str, list[float]] = {}
+        elem_wl_score: dict[str, list[tuple[float, float]]] = {}  # (score, matched_wl)
+
+        if matches:
+            for m in matches:
+                elem = (getattr(m, "element", None)
+                        or getattr(m, "matched_element", None))
+                if not elem:
+                    continue
+                elem = str(elem)
+                delta = getattr(m, "delta", None)
+                score = getattr(m, "score", None)
+                mwl   = getattr(m, "matched_wl", None)
+
+                if delta is not None:
+                    try:
+                        elem_deltas.setdefault(elem, []).append(abs(float(delta)))
+                    except (TypeError, ValueError):
+                        pass
+                if score is not None:
+                    try:
+                        s = float(score)
+                        elem_scores.setdefault(elem, []).append(s)
+                        if mwl is not None:
+                            elem_wl_score.setdefault(elem, []).append(
+                                (s, float(mwl))
+                            )
+                    except (TypeError, ValueError):
+                        pass
+
         for _, row in ranking_df.iterrows():
             element = str(row["Element"])
             wins = int(row["Wins"]) if not pd.isna(row["Wins"]) else 0
             tier = self._classify_confidence_tier(wins)
+
+            # avg delta
+            deltas = elem_deltas.get(element, [])
+            avg_delta = float(np.mean(deltas)) if deltas else None
+
+            # avg score
+            scores = elem_scores.get(element, [])
+            avg_score = float(np.mean(scores)) if scores else None
+
+            # best lines — top-5 NIST wavelengths by score, deduped
+            wl_scores = elem_wl_score.get(element, [])
+            if wl_scores:
+                wl_scores_sorted = sorted(wl_scores, key=lambda x: x[0], reverse=True)
+                seen_wls: set[float] = set()
+                best: list[float] = []
+                for sc, wl in wl_scores_sorted:
+                    rounded = round(wl, 2)
+                    if rounded not in seen_wls:
+                        seen_wls.add(rounded)
+                        best.append(rounded)
+                    if len(best) >= 5:
+                        break
+            else:
+                best = []
+
             rows.append(
                 ElementRow(
                     element=element,
                     confidence_tier=tier,
                     matched_lines=wins,
                     mean_vc=elem_mean_vc.get(element),
+                    avg_delta=avg_delta,
+                    avg_score=avg_score,
+                    best_lines=best,
                 )
             )
         return rows
