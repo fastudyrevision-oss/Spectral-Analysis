@@ -193,9 +193,9 @@ class SpectralAnalysisApp(QMainWindow):
             self.statusBar.showMessage(f"Tab: {tab_names[index]}")
 
         if index == 5:
-            self.step6_tab.refresh()
+            self.step6_tab.refresh_if_not_cleared()
         elif index == 6:
-            self.summary_tab.refresh()
+            self.summary_tab.refresh_if_not_cleared()
 
 
 def main():

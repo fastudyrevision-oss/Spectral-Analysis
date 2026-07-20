@@ -588,40 +588,82 @@ class ChartEngine:
         element_labels: list,
     ) -> None:
         """Correlation heatmap: peaks × elements, coolwarm colormap (Step 6 / Figure 12)."""
-        ax.clear()
+        # NOTE: the caller must use fig.clf() + add_subplot() before calling
+        # this method — NOT ax.clear() — so that any colorbar axes added by a
+        # previous render are fully removed from the figure.
         fig = ax.get_figure()
         try:
+            # Relax guard: require at least 1 row AND 1 column with real data
             if (heatmap_matrix is None
                     or not hasattr(heatmap_matrix, "shape")
-                    or heatmap_matrix.shape[0] < 2
-                    or heatmap_matrix.shape[1] < 2):
+                    or heatmap_matrix.shape[0] < 1
+                    or heatmap_matrix.shape[1] < 1
+                    or heatmap_matrix.size == 0):
                 ChartEngine._show_placeholder(ax, "Insufficient heatmap data")
                 ChartEngine.apply_dark_style(fig, ax)
                 return
 
-            im = ax.imshow(heatmap_matrix, aspect="auto", cmap="coolwarm",
-                           vmin=0.0, vmax=1.0)
+            n_rows, n_cols = heatmap_matrix.shape
+
+            # Determine real data range for colour scaling.
+            # Use symmetric range around 0 so negative VC (anti-correlated) shows
+            # as blue, positive as red/warm — more informative than 0→1 clamp.
+            v_abs = np.abs(heatmap_matrix[np.isfinite(heatmap_matrix)])
+            v_max = float(v_abs.max()) if len(v_abs) > 0 else 1.0
+            v_max = max(v_max, 0.01)   # prevent vmin==vmax
+
+            # Use RdYlGn: red=low/negative, yellow=mid, green=high/confirmed
+            im = ax.imshow(
+                heatmap_matrix,
+                aspect="auto",
+                cmap="RdYlGn",
+                vmin=-v_max,
+                vmax=v_max,
+            )
+
+            # Colorbar — safe because the caller cleared the whole figure first
             cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label("Correlation Score", color=get_chart_text2(), fontsize=8)
+            cbar.set_label("Validation Coefficient (VC)", color=get_chart_text2(), fontsize=8)
             cbar.ax.tick_params(colors=get_chart_text2(), labelsize=7)
             cbar.ax.yaxis.set_tick_params(color=get_chart_text2())
 
-            n_rows, n_cols = heatmap_matrix.shape
+            # Cell annotations
             for i in range(n_rows):
                 for j in range(n_cols):
                     val = heatmap_matrix[i, j]
-                    text_colour = "#FFFFFF" if val >= 0.5 else C_BG_DEEP
-                    ax.text(j, i, f"{val:.2f}",
+                    if not np.isfinite(val):
+                        label = "—"
+                        text_colour = get_chart_text2()
+                    else:
+                        label = f"{val:.2f}"
+                        # White text on dark/saturated cells, dark on light cells
+                        norm_val = val / v_max  # in [-1, 1]
+                        text_colour = "#FFFFFF" if abs(norm_val) >= 0.45 else "#1A1A1A"
+                    ax.text(j, i, label,
                             ha="center", va="center",
-                            color=text_colour, fontsize=7, fontweight="bold")
+                            color=text_colour,
+                            fontsize=7, fontweight="bold")
 
+            # Axis labels
             ax.set_yticks(range(n_rows))
-            ax.set_yticklabels(peak_labels, fontsize=7)
+            # Truncate long peak labels to keep the chart readable
+            truncated_peak = [
+                (lbl[:22] + "…") if len(lbl) > 25 else lbl
+                for lbl in peak_labels
+            ]
+            ax.set_yticklabels(truncated_peak, fontsize=7)
             ax.set_xticks(range(n_cols))
             ax.set_xticklabels(element_labels, fontsize=8, rotation=45, ha="right")
-            ax.set_title("Correlation Heatmap", color=get_chart_text(),
-                         fontsize=10, fontweight="bold")
+            ax.set_xlabel("Elements", color=get_chart_text2(), fontsize=8)
+            ax.set_ylabel("Peaks (wavelength)", color=get_chart_text2(), fontsize=8)
+            ax.set_title(
+                "Ambiguous Peaks vs Elements  (VC correlation)",
+                color=get_chart_text(),
+                fontsize=10, fontweight="bold",
+            )
+
             _finish(fig, ax)
+
         except Exception:
             logger.exception("render_correlation_heatmap failed")
             ax.clear()
@@ -706,29 +748,29 @@ class ChartEngine:
 
     @staticmethod
     def render_pipeline_funnel(ax: Axes, stage_counts: "dict | None") -> None:
-        """Modern Funnel Diagram for the multi-stage validation pipeline.
+        """UX-optimised vertical funnel diagram for the multi-stage validation pipeline.
 
-        Draws centred trapezoid shapes that narrow at each stage, with the
-        stage name, peak count, and reduction annotation inside/below each
-        shape.  Layout matches the requested design:
-
-            350 ┌────────────────┐  Detected Peaks
-                ↓ Reduction x%
-            180 ┌──────────────┐   NIST Match
-                ↓ ...
+        UX principles applied:
+          • Spatial separation — count INSIDE box (max contrast white-on-colour),
+            title/description OUTSIDE LEFT (dark-on-dark bg, large enough to read),
+            retention badge OUTSIDE RIGHT (coloured border pill).
+          • Visual hierarchy — count (14 pt bold) > title (8.5 pt bold) >
+            description (7.5 pt) > meta / filter labels (7 pt).
+          • No text overlap — each element owns exactly one zone.
+          • Colour consistency — filter annotations always C_WARN amber;
+            retention badge border matches stage colour for quick association.
+          • Minimum font size 7 pt so nothing is illegible at normal DPI.
         """
         ax.clear()
         fig = ax.get_figure()
         try:
-            # ── Guard ────────────────────────────────────────────────────────
             if stage_counts is None:
                 ChartEngine._show_placeholder(ax, "Insufficient pipeline data")
                 ChartEngine.apply_dark_style(fig, ax)
                 return
 
             counts = [stage_counts.get(k, 0) for k in STAGE_KEYS]
-            non_zero = sum(1 for c in counts if c > 0)
-            if non_zero < 2:
+            if sum(1 for c in counts if c > 0) < 2:
                 ChartEngine._show_placeholder(ax, "Insufficient pipeline data")
                 ChartEngine.apply_dark_style(fig, ax)
                 return
@@ -738,148 +780,245 @@ class ChartEngine:
 
             n = len(STAGE_KEYS)
 
-            # Short display names for the funnel boxes
-            FUNNEL_NAMES = [
+            STAGE_TITLES = [
                 "Detected Peaks",
-                "NIST Match",
-                "Ranking",
-                "Pure",
-                "Bayesian",
+                "NIST Matched",
+                "Element Ranked",
+                "Validated  (VC \u2265 0.50)",
+                "Confirmed  (VC \u2265 0.70)",
+            ]
+            STAGE_STEPS = ["Step 2", "Step 3", "Step 4", "Step 5", "Step 5"]
+            STAGE_DESC = [
+                "All spectral peaks found by the detector",
+                "Peaks matched against NIST atomic line database",
+                "Element assigned & competition-ranked",
+                "Line validated vs. reference (moderate confidence)",
+                "High-confidence confirmed emission lines",
             ]
 
-            # --- colour gradient (accent → accent2) -------------------------
+            # Blue → teal gradient
             rgb1 = mcolors.to_rgb(C_ACCENT)
             rgb2 = mcolors.to_rgb(C_ACCENT2)
+            colours = [
+                tuple(rgb1[k] + (rgb2[k] - rgb1[k]) * i / (n - 1) for k in range(3))
+                for i in range(n)
+            ]
 
-            def _lerp(t: float) -> tuple:
-                return tuple(rgb1[i] + (rgb2[i] - rgb1[i]) * t for i in range(3))
+            # ── Coordinate layout ────────────────────────────────────────────
+            # x zones (normalised 0–1):
+            #   [0.00–0.01]  left margin
+            #   [0.01–0.30]  LEFT LABEL ZONE  (step badge, title, description)
+            #   [0.30–0.72]  FUNNEL ZONE      (trapezoid + count)
+            #   [0.72–0.74]  gap
+            #   [0.74–0.99]  RIGHT BADGE ZONE (retention pill)
+            LZ_X      = 0.01   # left label x anchor
+            FZ_LEFT   = 0.30   # funnel zone left edge
+            FZ_RIGHT  = 0.72   # funnel zone right edge
+            FZ_CX     = (FZ_LEFT + FZ_RIGHT) / 2.0
+            FZ_SPAN   = FZ_RIGHT - FZ_LEFT
+            RZ_LEFT   = 0.745  # right zone left edge
+            RZ_CX     = 0.865  # right zone centre x
 
-            colours = [_lerp(i / (n - 1)) for i in range(n)]
-
-            # --- layout constants -------------------------------------------
-            # Each funnel stage occupies a vertical slot of height SLOT_H.
-            # The gap between slots (for the arrow + reduction text) is GAP_H.
-            SLOT_H = 1.0        # height of each trapezoid
-            GAP_H  = 0.55       # gap between stages for arrow + text
+            SLOT_H  = 1.10
+            GAP_H   = 0.80    # taller gap = more space for filter annotation
             TOTAL_H = n * SLOT_H + (n - 1) * GAP_H
 
-            # Widths: the widest box = MAX_W, narrowing proportionally to count
-            max_count = max(counts) if any(c > 0 for c in counts) else 1
-            MAX_W = 0.80        # fraction of axes width
-            MIN_W = 0.25        # minimum fraction so tiny counts are still visible
+            max_count    = max(counts) if any(c > 0 for c in counts) else 1
+            stage1_count = counts[0] if counts[0] > 0 else 1
 
-            def _width(count: int) -> float:
-                ratio = count / max_count if max_count > 0 else 0
-                return MIN_W + (MAX_W - MIN_W) * ratio
+            MAX_HALF = FZ_SPAN / 2.0
+            MIN_HALF = FZ_SPAN * 0.14   # narrowest stage still clearly visible
 
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, TOTAL_H)
+            def _hw(count: int) -> float:
+                r = count / max_count if max_count > 0 else 0
+                return MIN_HALF + (MAX_HALF - MIN_HALF) * r
+
+            ax.set_xlim(0.0, 1.0)
+            ax.set_ylim(-0.15, TOTAL_H + 0.55)
             ax.axis("off")
             fig.patch.set_facecolor(get_chart_bg())
             ax.set_facecolor(get_chart_axes_bg())
 
-            for i, (count, colour, name) in enumerate(zip(counts, colours, FUNNEL_NAMES)):
-                # y-coordinate of this stage's bottom edge
-                # Stages drawn top-to-bottom: stage 0 at top
+            # ── Column header row ────────────────────────────────────────────
+            HDR_Y = TOTAL_H + 0.42
+            for x, label, ha in [
+                (LZ_X,  "Stage",      "left"),
+                (FZ_CX, "Count",      "center"),
+                (RZ_CX, "Retention",  "center"),
+            ]:
+                ax.text(x, HDR_Y, label,
+                        ha=ha, va="center",
+                        color=get_chart_text2(),
+                        fontsize=7.5, fontweight="bold")
+
+            # thin separator under headers
+            ax.axhline(TOTAL_H + 0.28, xmin=0.01, xmax=0.99,
+                       color=get_chart_border(), linewidth=0.6, alpha=0.6)
+
+            # ── Draw stages ──────────────────────────────────────────────────
+            for i, (count, colour, title, step_lbl, desc) in enumerate(
+                zip(counts, colours, STAGE_TITLES, STAGE_STEPS, STAGE_DESC)
+            ):
                 slot_top = TOTAL_H - i * (SLOT_H + GAP_H)
                 slot_bot = slot_top - SLOT_H
+                mid_y    = (slot_top + slot_bot) / 2.0
 
-                w_top = _width(count)
-                # The bottom edge narrows slightly relative to the top to give
-                # a true trapezoid feel.  Use the next stage's width as the
-                # bottom, unless it's the last stage.
-                if i < n - 1:
-                    w_bot = _width(counts[i + 1])
-                else:
-                    w_bot = w_top * 0.85
+                hw_top = _hw(count)
+                hw_bot = _hw(counts[i + 1]) if i < n - 1 else hw_top * 0.80
 
-                cx = 0.5  # centre x
-
-                # Trapezoid vertices (bottom-left, bottom-right, top-right, top-left)
-                xs = [cx - w_bot / 2, cx + w_bot / 2,
-                      cx + w_top / 2, cx - w_top / 2]
-                ys = [slot_bot, slot_bot, slot_top, slot_top]
-
+                # ── Trapezoid (funnel slice) ──────────────────────────────
+                verts = [
+                    (FZ_CX - hw_top, slot_top),
+                    (FZ_CX + hw_top, slot_top),
+                    (FZ_CX + hw_bot, slot_bot),
+                    (FZ_CX - hw_bot, slot_bot),
+                ]
                 trap = mpatches.Polygon(
-                    list(zip(xs, ys)),
-                    closed=True,
+                    verts, closed=True,
                     facecolor=colour,
                     edgecolor=get_chart_bg(),
-                    linewidth=1.5,
-                    zorder=3,
+                    linewidth=2.0, zorder=3,
                 )
                 ax.add_patch(trap)
 
-                # Count label (large, centred in box)
-                mid_y = (slot_top + slot_bot) / 2.0
-                ax.text(
-                    cx, mid_y + 0.12,
-                    str(int(count)),
-                    ha="center", va="center",
-                    color="#FFFFFF",
-                    fontsize=13, fontweight="bold",
-                    zorder=4,
-                )
-                # Stage name below the count
-                ax.text(
-                    cx, mid_y - 0.18,
-                    name,
-                    ha="center", va="center",
-                    color="#FFFFFF",
-                    fontsize=8,
-                    zorder=4,
+                # Subtle highlight stripe at top edge (depth cue)
+                ax.plot(
+                    [FZ_CX - hw_top + 0.005, FZ_CX + hw_top - 0.005],
+                    [slot_top - 0.03, slot_top - 0.03],
+                    color="#FFFFFF", alpha=0.15, linewidth=1.2, zorder=4,
                 )
 
-                # Arrow + reduction annotation between this and next stage
+                # ── Count — dominant, white-on-colour ────────────────────
+                ax.text(FZ_CX, mid_y + 0.15, f"{count:,}",
+                        ha="center", va="center",
+                        color="#FFFFFF",
+                        fontsize=14, fontweight="bold", zorder=5)
+
+                # "peaks / lines" unit label
+                unit = "peaks" if i < 3 else "lines"
+                ax.text(FZ_CX, mid_y - 0.12, unit,
+                        ha="center", va="center",
+                        color="#FFFFFF", alpha=0.65,
+                        fontsize=7, zorder=5)
+
+                # ── LEFT ZONE: step badge ─────────────────────────────────
+                # Rounded pill badge: "Step N"
+                badge_h = 0.24
+                badge_w = 0.135
+                badge_cx = LZ_X + badge_w / 2
+                badge_cy = mid_y + 0.35
+                badge = mpatches.FancyBboxPatch(
+                    (LZ_X, badge_cy - badge_h / 2),
+                    badge_w, badge_h,
+                    boxstyle="round,pad=0.025",
+                    facecolor=colour, edgecolor="none",
+                    alpha=0.92, zorder=4,
+                )
+                ax.add_patch(badge)
+                ax.text(badge_cx, badge_cy, step_lbl,
+                        ha="center", va="center",
+                        color="#FFFFFF",
+                        fontsize=7, fontweight="bold", zorder=5)
+
+                # Stage title
+                ax.text(LZ_X, mid_y + 0.06, title,
+                        ha="left", va="center",
+                        color=get_chart_text(),
+                        fontsize=8.5, fontweight="bold", zorder=4)
+
+                # Description — secondary, smaller, muted
+                ax.text(LZ_X, mid_y - 0.22, desc,
+                        ha="left", va="center",
+                        color=get_chart_text2(),
+                        fontsize=7.0, zorder=4)
+
+                # ── RIGHT ZONE: retention pill ────────────────────────────
+                retention_pct = count / stage1_count * 100.0
+                pill_h = 0.36
+                pill_w = 0.225
+                pill_box = mpatches.FancyBboxPatch(
+                    (RZ_LEFT, mid_y - pill_h / 2),
+                    pill_w, pill_h,
+                    boxstyle="round,pad=0.025",
+                    facecolor=get_chart_axes_bg(),
+                    edgecolor=colour,
+                    linewidth=1.2, zorder=4,
+                )
+                ax.add_patch(pill_box)
+                ax.text(RZ_CX, mid_y + 0.08, f"{retention_pct:.0f}%",
+                        ha="center", va="center",
+                        color=colour,
+                        fontsize=9, fontweight="bold", zorder=5)
+                ax.text(RZ_CX, mid_y - 0.13, "retained",
+                        ha="center", va="center",
+                        color=get_chart_text2(),
+                        fontsize=6.5, zorder=5)
+
+                # ── ARROW + FILTER ANNOTATION between stages ──────────────
                 if i < n - 1:
-                    arrow_y_top = slot_bot
-                    arrow_y_bot = slot_bot - GAP_H
-                    arrow_mid_y = (arrow_y_top + arrow_y_bot) / 2.0
+                    a_top = slot_bot - 0.05
+                    a_bot = slot_bot - GAP_H + 0.09
+                    a_mid = (a_top + a_bot) / 2.0
 
+                    # Arrow centred in funnel zone
                     ax.annotate(
                         "",
-                        xy=(cx, arrow_y_bot + 0.04),
-                        xytext=(cx, arrow_y_top - 0.04),
+                        xy=(FZ_CX, a_bot),
+                        xytext=(FZ_CX, a_top),
                         arrowprops=dict(
                             arrowstyle="-|>",
                             color=get_chart_text2(),
-                            lw=1.5,
+                            lw=1.6,
+                            mutation_scale=11,
                         ),
                         zorder=5,
                     )
 
-                    prev = counts[i]
-                    nxt  = counts[i + 1]
-                    if prev > 0 and nxt < prev:
-                        reduction_pct = (prev - nxt) / prev * 100.0
-                        red_label = f"Reduction {reduction_pct:.1f}%"
-                    elif prev > 0 and nxt >= prev:
-                        red_label = "No reduction"
-                    else:
-                        red_label = ""
-
-                    if red_label:
-                        ax.text(
-                            cx + 0.03, arrow_mid_y,
-                            red_label,
-                            ha="left", va="center",
-                            color=get_chart_text2(),
-                            fontsize=7.5,
-                            zorder=5,
+                    nxt = counts[i + 1]
+                    if count > 0 and nxt < count:
+                        dropped = count - nxt
+                        pct     = dropped / count * 100.0
+                        # Amber pill to the right of the arrow
+                        fp_x   = FZ_CX + 0.03
+                        fp_w   = 0.18
+                        fp_h   = 0.32
+                        fp_box = mpatches.FancyBboxPatch(
+                            (fp_x, a_mid - fp_h / 2),
+                            fp_w, fp_h,
+                            boxstyle="round,pad=0.02",
+                            facecolor=get_chart_axes_bg(),
+                            edgecolor=C_WARN,
+                            linewidth=0.9, zorder=5,
                         )
+                        ax.add_patch(fp_box)
+                        fp_cx = fp_x + fp_w / 2
+                        ax.text(fp_cx, a_mid + 0.07,
+                                f"\u2212{dropped:,} filtered",
+                                ha="center", va="center",
+                                color=C_WARN,
+                                fontsize=7, fontweight="bold", zorder=6)
+                        ax.text(fp_cx, a_mid - 0.10,
+                                f"{pct:.0f}% removed",
+                                ha="center", va="center",
+                                color=get_chart_text2(),
+                                fontsize=6.5, zorder=6)
+                    elif count > 0:
+                        ax.text(FZ_CX + 0.03, a_mid,
+                                "no reduction",
+                                ha="left", va="center",
+                                color=get_chart_text2(),
+                                fontsize=7, zorder=5)
 
             ax.set_title(
                 "Multi-Stage Validation Pipeline",
                 color=get_chart_text(),
-                fontsize=10, fontweight="bold",
-                pad=6,
+                fontsize=10, fontweight="bold", pad=10,
             )
 
             try:
-                fig.tight_layout(pad=1.0)
+                fig.tight_layout(pad=1.2)
             except Exception:
                 pass
-
             fig.patch.set_facecolor(get_chart_bg())
 
         except Exception:

@@ -120,6 +120,8 @@ class SummaryWidget(QWidget):
         self._s4 = step4
         self._s5 = step5
 
+        self._cleared = False  # True after Clear; suppresses auto-refresh on tab-switch
+
         # ── stat-card references (updated on refresh) ─────────────────────
         self._card_peaks: QLabel | None = None
         self._card_elements: QLabel | None = None
@@ -361,6 +363,7 @@ class SummaryWidget(QWidget):
 
     def refresh(self):
         """Pull the latest data from every step widget and update all panels."""
+        self._cleared = False  # explicit refresh rearms auto-refresh
         self._refresh_step1()
         self._refresh_step2()
         self._refresh_step3()
@@ -368,8 +371,14 @@ class SummaryWidget(QWidget):
         self._refresh_step5()
         self._refresh_conclusions()
 
+    def refresh_if_not_cleared(self) -> None:
+        """Called on tab-switch. Skips refresh when user has explicitly cleared."""
+        if not self._cleared:
+            self.refresh()
+
     def _clear(self):
         """Reset all charts and tables to placeholder state without re-reading data."""
+        self._cleared = True  # suppress auto-refresh on next tab-switch
         self._show_all_placeholders()
 
         # Reset stat cards

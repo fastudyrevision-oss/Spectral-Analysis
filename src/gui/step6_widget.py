@@ -75,6 +75,7 @@ class Step6Widget(QWidget):
         # Computation state
         self.performance_results = None
         self.worker_thread = None
+        self._cleared = False  # True after Clear is clicked; suppresses auto-refresh
 
         logger.info("Initialising Step 6 widget")
 
@@ -207,8 +208,8 @@ class Step6Widget(QWidget):
         tab7 = self._wrap_canvas(self.canvas7, self.toolbar7)
         self.chart_tabs.addTab(tab7, " Ranking")
 
-        # Fig 11: Pipeline Funnel
-        self.fig11 = Figure(figsize=(8, 3.5), dpi=100)
+        # Fig 11: Pipeline Funnel — taller figure to accommodate 5 stages
+        self.fig11 = Figure(figsize=(8, 7), dpi=100)
         self.fig11.patch.set_facecolor(chart_bg)
         self.ax11 = self.fig11.add_subplot(111)
         self.canvas11 = FigureCanvasQTAgg(self.fig11)
@@ -249,7 +250,7 @@ class Step6Widget(QWidget):
         self.summary_table = self._create_summary_table()
         splitter.addWidget(self.summary_table)
 
-        splitter.setSizes([400, 200])
+        splitter.setSizes([520, 180])
         layout.addWidget(splitter)
         return panel
 
@@ -286,12 +287,18 @@ class Step6Widget(QWidget):
         """Pull latest data from upstream tabs and trigger a (re)computation."""
         self._on_compute_clicked()
 
+    def refresh_if_not_cleared(self) -> None:
+        """Called on tab-switch. Skips refresh when user has explicitly cleared."""
+        if not self._cleared:
+            self._on_compute_clicked()
+
     # ------------------------------------------------------------------
     # Compute logic
     # ------------------------------------------------------------------
 
     def _on_compute_clicked(self) -> None:
         """Disable exports, show progress, launch background worker."""
+        self._cleared = False  # any explicit compute rearms auto-refresh
         # Reset export buttons every cycle (Requirement 10.4)
         self.export_csv_button.setEnabled(False)
         self.export_png_button.setEnabled(False)
@@ -310,14 +317,15 @@ class Step6Widget(QWidget):
     def _on_reload_clicked(self) -> None:
         """Re-read all upstream step data and recompute metrics from scratch."""
         logger.info("Step 6: Reload Data triggered")
+        self._cleared = False  # rearm auto-refresh going forward
         self.summary_banner.setText("Reloading data from Steps 2–5…")
         self.info_label.setText("Fetching latest upstream results and recomputing.")
-        # Delegate to the normal compute path — it always pulls live references
         self._on_compute_clicked()
 
     def _on_clear_clicked(self) -> None:
         """Clear all results, reset charts to placeholder, disable exports."""
         logger.info("Step 6: Clear triggered")
+        self._cleared = True  # suppress auto-refresh on next tab-switch
         self.performance_results = None
 
         # Disable exports
@@ -330,16 +338,23 @@ class Step6Widget(QWidget):
         self.info_label.setText("Complete Steps 2–5 to enable performance metrics computation.")
 
         # Reset all four charts to placeholder state
-        for ax, canvas in [
-            (self.ax7,  self.canvas7),
-            (self.ax11, self.canvas11),
-            (self.ax12, self.canvas12),
-            (self.ax14, self.canvas14),
+        for fig, canvas in [
+            (self.fig7,  self.canvas7),
+            (self.fig11, self.canvas11),
+            (self.fig14, self.canvas14),
         ]:
+            ax = fig.axes[0] if fig.axes else fig.add_subplot(111)
             ax.clear()
             ChartEngine._show_placeholder(ax, "No data — click Compute Metrics")
-            ChartEngine.apply_dark_style(ax.get_figure(), ax)
+            ChartEngine.apply_dark_style(fig, ax)
             canvas.draw()
+
+        # Fig 12 needs full figure clear to remove any orphaned colorbar axes
+        self.fig12.clf()
+        self.ax12 = self.fig12.add_subplot(111)
+        ChartEngine._show_placeholder(self.ax12, "No data — click Compute Metrics")
+        ChartEngine.apply_dark_style(self.fig12, self.ax12)
+        self.canvas12.draw()
 
         # Also clear the secondary axis on fig14
         self.ax14_2.clear()
@@ -395,13 +410,18 @@ class Step6Widget(QWidget):
         if missing:
             banner_text = f"Partial results — missing: {', '.join(missing)}."
         else:
-            acc = results.get("accuracy")
-            f1 = results.get("f1_score")
-            acc_str = f"{acc * 100:.1f}%" if acc is not None else "N/A"
-            f1_str = f"{f1 * 100:.1f}%" if f1 is not None else "N/A"
+            acc  = results.get("accuracy")
+            prec = results.get("precision")
+            rec  = results.get("recall")
+            f1   = results.get("f1_score")
+            acc_str  = f"{acc  * 100:.1f}%" if acc  is not None else "N/A"
+            prec_str = f"{prec * 100:.1f}%" if prec is not None else "N/A"
+            rec_str  = f"{rec  * 100:.1f}%" if rec  is not None else "N/A"
+            f1_str   = f"{f1   * 100:.1f}%" if f1   is not None else "N/A"
             n_elem = len(results.get("element_rows", []))
             banner_text = (
-                f"Accuracy: {acc_str}  |  F1-Score: {f1_str}  |  Elements: {n_elem}"
+                f"Acc: {acc_str}  Prec: {prec_str}  "
+                f"Rec: {rec_str}  F1: {f1_str}  |  Elements: {n_elem}"
             )
         self.summary_banner.setText(banner_text)
         self.info_label.setText("Metrics computed successfully.")
@@ -462,8 +482,16 @@ class Step6Widget(QWidget):
         self.canvas11.draw()
 
     def _update_chart_fig12(self) -> None:
-        """Render Fig 12: Correlation Heatmap."""
-        self.ax12.clear()
+        """Render Fig 12: Correlation Heatmap.
+
+        Uses fig.clf() + add_subplot() instead of ax.clear() so that any
+        orphaned colorbar axes from the previous render are fully removed.
+        """
+        # Full figure clear — removes the main axes AND any colorbar axes
+        # that fig.colorbar() added on the previous render.
+        self.fig12.clf()
+        self.ax12 = self.fig12.add_subplot(111)
+
         matrix = None
         peak_labels = []
         element_labels = []
