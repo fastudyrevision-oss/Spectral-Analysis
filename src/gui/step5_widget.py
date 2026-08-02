@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QFont, QColor
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from src import setup_logger
@@ -26,6 +26,7 @@ from src.config import STEP5_PARAMS
 from src.core.step5_validation import ValidationAnalyzer
 from src.io.file_reader import CSVReader
 from src.gui.gui_utils import (
+    HighDpiToolbar as NavigationToolbar2QT,
     FileSelector, WorkerThread,
     show_error, show_info
 )
@@ -64,7 +65,7 @@ class Step5Widget(QWidget):
         self.target_wavelengths = []
         # Overlay pagination state
         self._overlay_page = 0
-        self._overlay_page_size = 9   # 3×3 grid
+        self._overlay_page_size = 4   # 2×2 grid — larger, more readable charts
 
         logger.info("Initializing Step 5 widget")
 
@@ -224,12 +225,10 @@ class Step5Widget(QWidget):
         return scroll
 
     def _create_right_panel(self) -> QWidget:
-        """Right panel: tab widget (histogram | overlay) + results table."""
+        """Right panel: tab widget (histogram | overlay | results table)."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-
-        splitter = QSplitter(Qt.Orientation.Vertical)
 
         # ── Chart tabs ─────────────────────────────────────────────────────
         self.chart_tabs = QTabWidget()
@@ -310,7 +309,7 @@ class Step5Widget(QWidget):
         otl.addLayout(page_row)
 
         # ── Canvas + toolbar ───────────────────────────────────────────────
-        self.overlay_fig = Figure(figsize=(8, 4), dpi=100)
+        self.overlay_fig = Figure(figsize=(8, 6), dpi=100)
         self.overlay_fig.patch.set_facecolor(chart_bg)
         self.overlay_canvas = FigureCanvasQTAgg(self.overlay_fig)
         self.overlay_canvas.setStyleSheet(f"background-color: {chart_bg};")
@@ -320,19 +319,11 @@ class Step5Widget(QWidget):
 
         self.chart_tabs.addTab(overlay_tab, "Spectral Overlays")
 
-        chart_wrapper = QWidget()
-        cwl = QVBoxLayout(chart_wrapper)
-        cwl.setContentsMargins(0, 0, 0, 0); cwl.setSpacing(0)
-        cwl.addWidget(self.chart_tabs)
-        chart_wrapper.setMinimumHeight(280)
-        splitter.addWidget(chart_wrapper)
-
-        # ── Results table ─────────────────────────────────────────────────
+        # Tab 3: Results table
         self.results_table = self._create_results_table()
-        splitter.addWidget(self.results_table)
+        self.chart_tabs.addTab(self.results_table, "📋 Results Table")
 
-        splitter.setSizes([340, 340])
-        layout.addWidget(splitter)
+        layout.addWidget(self.chart_tabs)
         return panel
 
     def _create_results_table(self) -> QTableWidget:
@@ -573,7 +564,7 @@ class Step5Widget(QWidget):
             self._redraw_overlay_page()
 
     def _redraw_overlay_page(self):
-        """Render the current page of the filtered overlay grid (3×3 max)."""
+        """Render the current page of the filtered overlay grid (2×2 max)."""
         from src.gui.theme import (
             C_ACCENT, C_ACCENT2, C_BG_BASE, C_BG_RAISED,
             C_BORDER_SUBTLE, C_TEXT2,
@@ -582,11 +573,11 @@ class Step5Widget(QWidget):
         self.overlay_fig.clear()
         filtered = self._get_filtered_overlays()
         total = len(filtered)
-        ps = self._overlay_page_size
+        ps = self._overlay_page_size          # 4 per page
         n_pages = max(1, (total + ps - 1) // ps)
         self._overlay_page = max(0, min(self._overlay_page, n_pages - 1))
 
-        # Update pagination labels/buttons
+        # Update pagination labels / buttons
         self._overlay_page_label.setText(
             f"Page {self._overlay_page + 1} / {n_pages}")
         self._overlay_prev_btn.setEnabled(self._overlay_page > 0)
@@ -604,8 +595,9 @@ class Step5Widget(QWidget):
         page_entries = filtered[self._overlay_page * ps:
                                  (self._overlay_page + 1) * ps]
         n = len(page_entries)
-        ncols = min(n, 3)
-        nrows = (n + ncols - 1) // ncols
+
+        # Always use a 2×2 grid; hide unused cells
+        nrows, ncols = 2, 2
 
         axes = self.overlay_fig.subplots(nrows, ncols, squeeze=False)
 
@@ -618,40 +610,39 @@ class Step5Widget(QWidget):
             center = line_data['wavelength']
             tier_label, tier_colour, _ = ChartEngine.classify_vc(vc)
 
-            ax.plot(wl, proc, color=C_ACCENT,  linewidth=1.2, alpha=0.9,
+            ax.plot(wl, proc, color=C_ACCENT,  linewidth=1.5, alpha=0.9,
                     label="Processed")
-            ax.plot(wl, ref,  color=C_ACCENT2, linewidth=1.2, alpha=0.9,
+            ax.plot(wl, ref,  color=C_ACCENT2, linewidth=1.5, alpha=0.9,
                     linestyle="--", label="Reference")
 
             import math as _math
             vc_str = f"{vc:.3f}" if not _math.isnan(vc) else "N/A"
             ax.set_title(f"{center:.1f} nm  VC={vc_str}  [{tier_label}]",
-                         fontsize=7.5, color=tier_colour, pad=3,
+                         fontsize=9.5, color=tier_colour, pad=4,
                          fontweight="bold")
-            ax.set_xlabel("λ (nm)", fontsize=6.5, color=C_TEXT2)
-            ax.set_ylabel("Norm. Int.", fontsize=6.5, color=C_TEXT2)
+            ax.set_xlabel("Wavelength (nm)", fontsize=8.5, color=C_TEXT2)
+            ax.set_ylabel("Norm. Intensity", fontsize=8.5, color=C_TEXT2)
 
             ax.set_facecolor(C_BG_RAISED)
-            ax.tick_params(colors=C_TEXT2, which="both", labelsize=6)
+            ax.tick_params(colors=C_TEXT2, which="both", labelsize=8)
             for spine in ax.spines.values():
-                spine.set_edgecolor(C_BORDER_SUBTLE); spine.set_linewidth(0.6)
-            ax.grid(True, color=C_BORDER_SUBTLE, alpha=0.4,
-                    linewidth=0.4, linestyle="--")
+                spine.set_edgecolor(C_BORDER_SUBTLE); spine.set_linewidth(0.7)
+            ax.grid(True, color=C_BORDER_SUBTLE, alpha=0.45,
+                    linewidth=0.5, linestyle="--")
 
-            if idx == 0:
-                leg = ax.legend(fontsize=6, framealpha=0.6, loc="upper right")
-                leg.get_frame().set_facecolor(C_BG_RAISED)
-                leg.get_frame().set_edgecolor(C_BORDER_SUBTLE)
-                for t in leg.get_texts():
-                    t.set_color(C_TEXT2)
+            leg = ax.legend(fontsize=8, framealpha=0.6, loc="upper right")
+            leg.get_frame().set_facecolor(C_BG_RAISED)
+            leg.get_frame().set_edgecolor(C_BORDER_SUBTLE)
+            for t in leg.get_texts():
+                t.set_color(C_TEXT2)
 
-        # Hide unused axes in the grid
+        # Hide unused axes in the 2×2 grid
         for idx in range(n, nrows * ncols):
             axes[idx // ncols][idx % ncols].set_visible(False)
 
         self.overlay_fig.patch.set_facecolor(C_BG_BASE)
         try:
-            self.overlay_fig.tight_layout(pad=0.9, h_pad=1.4, w_pad=0.9)
+            self.overlay_fig.tight_layout(pad=1.2, h_pad=2.0, w_pad=1.2)
         except Exception:
             pass
         self.overlay_canvas.draw()

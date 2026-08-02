@@ -95,8 +95,9 @@ class SpectralAnalysisApp(QMainWindow):
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.setSpacing(0)
 
-        central_layout.addWidget(self.tabs, stretch=3)
-        central_layout.addWidget(self.notes_panel, stretch=1)
+        central_layout.addWidget(self.tabs, stretch=1)
+        central_layout.addWidget(self.notes_panel, stretch=0)
+        self.notes_panel.setMaximumHeight(26)   # collapsed height; expands on click
 
         central_widget.setLayout(central_layout)
         self.setCentralWidget(central_widget)

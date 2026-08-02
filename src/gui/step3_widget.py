@@ -17,9 +17,10 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QScrollArea,
     QFileDialog, QListWidget, QListWidgetItem, QAbstractItemView, QCheckBox,
+    QTabWidget,
 )
 from PyQt6.QtGui import QFont
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from src import setup_logger
@@ -28,6 +29,7 @@ from src.core.step3_nist_matching import NISTMatcher
 from src.io.file_reader import CSVReader
 from src.io.file_writer import CSVWriter
 from src.gui.gui_utils import (
+    HighDpiToolbar as NavigationToolbar2QT,
     ParameterControl, FileSelector, WorkerThread,
     show_error, show_info
 )
@@ -191,65 +193,60 @@ class Step3Widget(QWidget):
         return scroll
 
     def _create_right_panel(self) -> QWidget:
-        """Right panel: charts (top) + results table (bottom)."""
+        """Right panel: tab widget (charts + results table as tabs)."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        # ── Tab widget ─────────────────────────────────────────────────────
+        self.chart_tabs = QTabWidget()
 
-        # ── Charts ─────────────────────────────────────────────────────────
         chart_bg = get_chart_bg()
+
+        # Tab 1: Element Frequency chart
         self.freq_fig = Figure(figsize=(5, 3), dpi=100)
         self.freq_fig.patch.set_facecolor(chart_bg)
         self.freq_canvas = FigureCanvasQTAgg(self.freq_fig)
         self.freq_canvas.setStyleSheet(f"background-color: {chart_bg};")
-        self.freq_canvas.setMinimumHeight(180)
         self.freq_toolbar = NavigationToolbar2QT(self.freq_canvas)
-
-        self.score_fig = Figure(figsize=(5, 3), dpi=100)
-        self.score_fig.patch.set_facecolor(chart_bg)
-        self.score_canvas = FigureCanvasQTAgg(self.score_fig)
-        self.score_canvas.setStyleSheet(f"background-color: {chart_bg};")
-        self.score_canvas.setMinimumHeight(180)
-        self.score_toolbar = NavigationToolbar2QT(self.score_canvas)
 
         freq_container = QWidget()
         fcl = QVBoxLayout(freq_container)
         fcl.setContentsMargins(0, 0, 0, 0); fcl.setSpacing(2)
         fcl.addWidget(self.freq_canvas)
         fcl.addWidget(self.freq_toolbar)
+        self.chart_tabs.addTab(freq_container, "Element Frequency")
+
+        # Tab 2: Match Score Scatter chart
+        self.score_fig = Figure(figsize=(5, 3), dpi=100)
+        self.score_fig.patch.set_facecolor(chart_bg)
+        self.score_canvas = FigureCanvasQTAgg(self.score_fig)
+        self.score_canvas.setStyleSheet(f"background-color: {chart_bg};")
+        self.score_toolbar = NavigationToolbar2QT(self.score_canvas)
 
         score_container = QWidget()
         scl = QVBoxLayout(score_container)
         scl.setContentsMargins(0, 0, 0, 0); scl.setSpacing(2)
         scl.addWidget(self.score_canvas)
         scl.addWidget(self.score_toolbar)
+        self.chart_tabs.addTab(score_container, "Match Score Scatter")
 
-        charts_widget = QWidget()
-        chl = QHBoxLayout(charts_widget)
-        chl.setContentsMargins(4, 4, 4, 4); chl.setSpacing(8)
-        chl.addWidget(freq_container)
-        chl.addWidget(score_container)
-        splitter.addWidget(charts_widget)
-
-        # ── Results table ──────────────────────────────────────────────────
-        table_container = QWidget()
-        tcl = QVBoxLayout(table_container)
-        tcl.setContentsMargins(4, 2, 4, 4)
-        tcl.setSpacing(4)
+        # Tab 3: Results table
+        table_tab = QWidget()
+        ttl = QVBoxLayout(table_tab)
+        ttl.setContentsMargins(4, 2, 4, 4)
+        ttl.setSpacing(4)
 
         self.matched_only_cb = QCheckBox("Show matched peaks only")
         self.matched_only_cb.setChecked(False)
         self.matched_only_cb.toggled.connect(self._on_filter_toggled)
-        tcl.addWidget(self.matched_only_cb)
+        ttl.addWidget(self.matched_only_cb)
 
         self.table = self._create_results_table()
-        tcl.addWidget(self.table)
-        splitter.addWidget(table_container)
+        ttl.addWidget(self.table)
+        self.chart_tabs.addTab(table_tab, "📋 Results Table")
 
-        splitter.setSizes([280, 380])
-        layout.addWidget(splitter)
+        layout.addWidget(self.chart_tabs)
         return panel
 
     def _create_results_table(self) -> QTableWidget:

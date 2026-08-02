@@ -22,10 +22,11 @@ from PyQt6.QtWidgets import (
     QPushButton,
 )
 from PyQt6.QtGui import QFont
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from src.gui.charts import ChartEngine
+from src.gui.gui_utils import HighDpiToolbar as NavigationToolbar2QT
 from src.gui.theme import (
     C_ACCENT, C_ACCENT2, C_SUCCESS, C_WARN, C_ERROR,
     C_BG_DEEP, C_BG_CARD, C_BG_INPUT, C_BG_PANEL,

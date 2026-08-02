@@ -15,13 +15,14 @@ from PyQt6.QtWidgets import (
     QFileDialog, QSplitter, QProgressBar, QScrollArea
 )
 from PyQt6.QtGui import QFont, QColor
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from src import setup_logger
 from src.config import STEP4_PARAMS
 from src.core.step4_elemental_preferences import ElementalPreferencesAnalyzer
 from src.gui.gui_utils import (
+    HighDpiToolbar as NavigationToolbar2QT,
     FileSelector, WorkerThread,
     show_error, show_info
 )
@@ -160,61 +161,60 @@ class Step4Widget(QWidget):
         return scroll
 
     def _create_right_panel(self) -> QWidget:
-        """Right panel: charts side-by-side (top) + tabbed tables (bottom)."""
+        """Right panel: single tab widget with charts + tabbed result tables."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        # ── Single tab widget: charts + tables all as tabs ─────────────────
+        self.chart_tabs = QTabWidget()
 
-        # ── Charts ─────────────────────────────────────────────────────────
         chart_bg = get_chart_bg()
+
+        # Tab 1: Ranking Chart
         self.ranking_fig = Figure(figsize=(6, 3), dpi=100)
         self.ranking_fig.patch.set_facecolor(chart_bg)
         self.ranking_canvas = FigureCanvasQTAgg(self.ranking_fig)
         self.ranking_canvas.setStyleSheet(f"background-color: {chart_bg};")
-        self.ranking_canvas.setMinimumHeight(160)
         self.ranking_toolbar = NavigationToolbar2QT(self.ranking_canvas)
-
-        self.scatter_fig = Figure(figsize=(6, 3), dpi=100)
-        self.scatter_fig.patch.set_facecolor(chart_bg)
-        self.scatter_canvas = FigureCanvasQTAgg(self.scatter_fig)
-        self.scatter_canvas.setStyleSheet(f"background-color: {chart_bg};")
-        self.scatter_canvas.setMinimumHeight(160)
-        self.scatter_toolbar = NavigationToolbar2QT(self.scatter_canvas)
 
         rank_container = QWidget()
         rcl = QVBoxLayout(rank_container)
         rcl.setContentsMargins(0, 0, 0, 0); rcl.setSpacing(2)
         rcl.addWidget(self.ranking_canvas)
         rcl.addWidget(self.ranking_toolbar)
+        self.chart_tabs.addTab(rank_container, "Ranking Chart")
+
+        # Tab 2: Score Scatter Chart
+        self.scatter_fig = Figure(figsize=(6, 3), dpi=100)
+        self.scatter_fig.patch.set_facecolor(chart_bg)
+        self.scatter_canvas = FigureCanvasQTAgg(self.scatter_fig)
+        self.scatter_canvas.setStyleSheet(f"background-color: {chart_bg};")
+        self.scatter_toolbar = NavigationToolbar2QT(self.scatter_canvas)
 
         scatter_container = QWidget()
         scl = QVBoxLayout(scatter_container)
         scl.setContentsMargins(0, 0, 0, 0); scl.setSpacing(2)
         scl.addWidget(self.scatter_canvas)
         scl.addWidget(self.scatter_toolbar)
+        self.chart_tabs.addTab(scatter_container, "Score Scatter")
 
-        charts_widget = QWidget()
-        chl = QHBoxLayout(charts_widget)
-        chl.setContentsMargins(4, 4, 4, 4); chl.setSpacing(8)
-        chl.addWidget(rank_container)
-        chl.addWidget(scatter_container)
+        # Tab 3: Element Ranking table
+        self.ranking_table = self._create_ranking_table()
+        self.chart_tabs.addTab(self.ranking_table, "📋 Element Ranking")
 
-        splitter.addWidget(charts_widget)
-
-        # ── Tabbed result tables ───────────────────────────────────────────
-        self.results_tabs = QTabWidget()
-        self.ranking_table   = self._create_ranking_table()
+        # Tab 4: Peak Competition table
         self.competition_table = self._create_results_table()
-        self.winners_table   = self._create_winners_table()
-        self.results_tabs.addTab(self.ranking_table,    "Element Ranking")
-        self.results_tabs.addTab(self.competition_table, "Peak Competition")
-        self.results_tabs.addTab(self.winners_table,    "Winner Lines")
-        splitter.addWidget(self.results_tabs)
+        self.chart_tabs.addTab(self.competition_table, "📋 Peak Competition")
 
-        splitter.setSizes([280, 400])
-        layout.addWidget(splitter)
+        # Tab 5: Winner Lines table
+        self.winners_table = self._create_winners_table()
+        self.chart_tabs.addTab(self.winners_table, "📋 Winner Lines")
+
+        # Keep results_tabs as an alias so existing code that references it still works
+        self.results_tabs = self.chart_tabs
+
+        layout.addWidget(self.chart_tabs)
         return panel
 
     # ──────────────────────────────────────────────────────────────────────

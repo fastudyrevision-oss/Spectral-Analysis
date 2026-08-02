@@ -11,11 +11,11 @@ import numpy as np
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
-    QTableWidget, QTableWidgetItem, QScrollArea, QSplitter, QTabWidget,
+    QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea, QSplitter, QTabWidget,
     QSizePolicy
 )
 from PyQt6.QtGui import QFont
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from src import setup_logger
@@ -24,6 +24,7 @@ from src.core.step1_sg_als import BaselineCorrection
 from src.io.file_reader import CSVReader
 from src.io.file_writer import CSVWriter, PlotGenerator
 from src.gui.gui_utils import (
+    HighDpiToolbar as NavigationToolbar2QT,
     ParameterControl, FileSelector, WorkerThread,
     show_error, show_info
 )
@@ -170,14 +171,12 @@ class Step1Widget(QWidget):
         return scroll
 
     def _create_right_panel(self) -> QWidget:
-        """Create right visualization panel (tabs + table)."""
+        """Create right visualization panel (tabs + table as a tab)."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # ── Tab widget with 5 chart tabs ──────────────────────────────────
+        # ── Tab widget with 5 chart tabs + 1 data table tab ───────────────
         self.tab_widget = QTabWidget()
 
         # Tab 1: Raw Spectrum
@@ -200,28 +199,57 @@ class Step1Widget(QWidget):
         self.fig_conv, self.ax_conv, self.canvas_conv, self.toolbar_conv = \
             self._make_chart_tab("ALS Convergence")
 
-        splitter.addWidget(self.tab_widget)
+        # Tab 6: Data Table with pagination
+        self._table_page = 0
+        self._table_page_size = 100
 
-        # ── Results table ─────────────────────────────────────────────────
-        table_label = QLabel("Processed Data Preview")
+        table_container = QWidget()
+        tcl = QVBoxLayout(table_container)
+        tcl.setContentsMargins(4, 4, 4, 4)
+        tcl.setSpacing(4)
+
+        # ── Header row: title + pagination controls ────────────────────────
+        table_header = QHBoxLayout()
+        table_title = QLabel("Processed Data Preview")
         tlf = QFont(); tlf.setBold(True)
-        table_label.setFont(tlf)
+        table_title.setFont(tlf)
+        table_header.addWidget(table_title)
+        table_header.addStretch()
+
+        self._table_prev_btn = QPushButton("◀ Prev")
+        self._table_prev_btn.setMaximumWidth(70)
+        self._table_prev_btn.setEnabled(False)
+        self._table_prev_btn.clicked.connect(self._on_table_prev)
+        table_header.addWidget(self._table_prev_btn)
+
+        self._table_page_label = QLabel("Page — / —")
+        self._table_page_label.setMinimumWidth(90)
+        self._table_page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        table_header.addWidget(self._table_page_label)
+
+        self._table_next_btn = QPushButton("Next ▶")
+        self._table_next_btn.setMaximumWidth(70)
+        self._table_next_btn.setEnabled(False)
+        self._table_next_btn.clicked.connect(self._on_table_next)
+        table_header.addWidget(self._table_next_btn)
+
+        self._table_count_label = QLabel("")
+        self._table_count_label.setMinimumWidth(80)
+        self._table_count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        table_header.addWidget(self._table_count_label)
+
+        tcl.addLayout(table_header)
 
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels([
             "Wavelength (nm)", "Raw", "Smoothed_SG", "Baseline_ALS", "Corrected"
         ])
-
-        table_container = QWidget()
-        tcl = QVBoxLayout(table_container)
-        tcl.setContentsMargins(4, 4, 4, 4)
-        tcl.addWidget(table_label)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         tcl.addWidget(self.table)
-        splitter.addWidget(table_container)
+        self.tab_widget.addTab(table_container, "📋 Data Table")
 
-        splitter.setSizes([500, 220])
-        layout.addWidget(splitter)
+        layout.addWidget(self.tab_widget)
         return panel
 
     def _make_chart_tab(self, title: str):
@@ -558,18 +586,47 @@ class Step1Widget(QWidget):
     # Table & save
     # ──────────────────────────────────────────────────────────────────────
 
+    def _on_table_prev(self):
+        if self._table_page > 0:
+            self._table_page -= 1
+            self._update_table()
+
+    def _on_table_next(self):
+        if self.processed_data is None:
+            return
+        n_total = len(self.processed_data.wavelength)
+        n_pages = max(1, (n_total + self._table_page_size - 1) // self._table_page_size)
+        if self._table_page < n_pages - 1:
+            self._table_page += 1
+            self._update_table()
+
     def _update_table(self):
         if self.processed_data is None:
             return
-        n_rows = min(10, len(self.processed_data.wavelength))
+        d = self.processed_data
+        n_total = len(d.wavelength)
+        ps = self._table_page_size
+        n_pages = max(1, (n_total + ps - 1) // ps)
+        self._table_page = max(0, min(self._table_page, n_pages - 1))
+
+        start = self._table_page * ps
+        end   = min(start + ps, n_total)
+        n_rows = end - start
+
         self.table.setRowCount(n_rows)
         for i in range(n_rows):
-            d = self.processed_data
-            self.table.setItem(i, 0, QTableWidgetItem(f"{d.wavelength[i]:.5f}"))
-            self.table.setItem(i, 1, QTableWidgetItem(f"{d.raw[i]:.6g}"))
-            self.table.setItem(i, 2, QTableWidgetItem(f"{d.smoothed_sg[i]:.6g}"))
-            self.table.setItem(i, 3, QTableWidgetItem(f"{d.baseline_als[i]:.6g}"))
-            self.table.setItem(i, 4, QTableWidgetItem(f"{d.corrected[i]:.6g}"))
+            idx = start + i
+            self.table.setItem(i, 0, QTableWidgetItem(f"{d.wavelength[idx]:.5f}"))
+            self.table.setItem(i, 1, QTableWidgetItem(f"{d.raw[idx]:.6g}"))
+            self.table.setItem(i, 2, QTableWidgetItem(f"{d.smoothed_sg[idx]:.6g}"))
+            self.table.setItem(i, 3, QTableWidgetItem(f"{d.baseline_als[idx]:.6g}"))
+            self.table.setItem(i, 4, QTableWidgetItem(f"{d.corrected[idx]:.6g}"))
+
+        # Update pagination controls
+        self._table_page_label.setText(f"Page {self._table_page + 1} / {n_pages}")
+        self._table_prev_btn.setEnabled(self._table_page > 0)
+        self._table_next_btn.setEnabled(self._table_page < n_pages - 1)
+        self._table_count_label.setText(f"{n_total:,} rows total")
 
     def _on_save_clicked(self):
         if self.processed_data is None:

@@ -11,10 +11,11 @@ import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
-    QTableWidget, QTableWidgetItem, QSplitter, QScrollArea
+    QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget,
+    QSplitter, QScrollArea
 )
 from PyQt6.QtGui import QFont
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from src import setup_logger
@@ -23,6 +24,7 @@ from src.core.step2_peaks import PeaksDetector
 from src.io.file_reader import CSVReader
 from src.io.file_writer import CSVWriter, PlotGenerator
 from src.gui.gui_utils import (
+    HighDpiToolbar as NavigationToolbar2QT,
     ParameterControl, FileSelector, WorkerThread,
     show_error, show_info
 )
@@ -202,15 +204,15 @@ class Step2Widget(QWidget):
         return scroll
     
     def _create_right_panel(self) -> QWidget:
-        """Create right visualization panel."""
+        """Create right visualization panel (chart tab + data table tab)."""
         panel = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Splitter for plot+toolbar and table
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        # ── Tab widget: one chart tab + one data table tab ─────────────────
+        self.view_tabs = QTabWidget()
 
-        # Plot canvas with navigation toolbar (zoom, pan, coordinates)
+        # Tab 1: Detected Peaks chart
         self.fig = Figure(figsize=(7, 4), dpi=100)
         chart_bg = get_chart_bg()
         self.fig.patch.set_facecolor(chart_bg)
@@ -225,28 +227,58 @@ class Step2Widget(QWidget):
         chart_layout.setContentsMargins(0, 0, 0, 0)
         chart_layout.addWidget(self.canvas)
         chart_layout.addWidget(self.toolbar)
-        splitter.addWidget(chart_container)
+        self.view_tabs.addTab(chart_container, "Detected Peaks")
 
-        # Results table
-        table_label = QLabel("Detected Peaks Preview")
-        table_font = QFont()
-        table_font.setBold(True)
-        table_label.setFont(table_font)
+        # Tab 2: Data table with pagination
+        self._table_page = 0
+        self._table_page_size = 100
 
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["Wavelength (nm)", "Intensity"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
         table_container = QWidget()
         table_layout = QVBoxLayout(table_container)
         table_layout.setContentsMargins(4, 4, 4, 4)
-        table_layout.addWidget(table_label)
+        table_layout.setSpacing(4)
+
+        # Header row with pagination controls
+        table_header = QHBoxLayout()
+        table_title = QLabel("Detected Peaks Preview")
+        table_font = QFont()
+        table_font.setBold(True)
+        table_title.setFont(table_font)
+        table_header.addWidget(table_title)
+        table_header.addStretch()
+
+        self._table_prev_btn = QPushButton("◀ Prev")
+        self._table_prev_btn.setMaximumWidth(70)
+        self._table_prev_btn.setEnabled(False)
+        self._table_prev_btn.clicked.connect(self._on_table_prev)
+        table_header.addWidget(self._table_prev_btn)
+
+        self._table_page_label = QLabel("Page — / —")
+        self._table_page_label.setMinimumWidth(90)
+        self._table_page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        table_header.addWidget(self._table_page_label)
+
+        self._table_next_btn = QPushButton("Next ▶")
+        self._table_next_btn.setMaximumWidth(70)
+        self._table_next_btn.setEnabled(False)
+        self._table_next_btn.clicked.connect(self._on_table_next)
+        table_header.addWidget(self._table_next_btn)
+
+        self._table_count_label = QLabel("")
+        self._table_count_label.setMinimumWidth(80)
+        self._table_count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        table_header.addWidget(self._table_count_label)
+
+        table_layout.addLayout(table_header)
         table_layout.addWidget(self.table)
-        splitter.addWidget(table_container)
+        self.view_tabs.addTab(table_container, "📋 Data Table")
 
-        splitter.setSizes([500, 250])
-        layout.addWidget(splitter)
-
+        layout.addWidget(self.view_tabs)
         panel.setLayout(layout)
         return panel
 
@@ -444,18 +476,42 @@ class Step2Widget(QWidget):
         self.info_label.setText("Error during detection")
         self.process_button.setEnabled(True)
     
-    def _update_table(self):
-        """Update results table with detected peaks."""
+    def _on_table_prev(self):
+        if self._table_page > 0:
+            self._table_page -= 1
+            self._update_table()
+
+    def _on_table_next(self):
         if self.detected_peaks is None:
             return
-        
-        n_rows = min(10, len(self.detected_peaks))
-        self.table.setRowCount(n_rows)
-        
-        for i in range(n_rows):
-            peak = self.detected_peaks[i]
+        n_pages = max(1, (len(self.detected_peaks) + self._table_page_size - 1)
+                      // self._table_page_size)
+        if self._table_page < n_pages - 1:
+            self._table_page += 1
+            self._update_table()
+
+    def _update_table(self):
+        """Update results table with detected peaks (paginated)."""
+        if self.detected_peaks is None:
+            return
+        n_total = len(self.detected_peaks)
+        ps = self._table_page_size
+        n_pages = max(1, (n_total + ps - 1) // ps)
+        self._table_page = max(0, min(self._table_page, n_pages - 1))
+
+        start = self._table_page * ps
+        end   = min(start + ps, n_total)
+
+        self.table.setRowCount(end - start)
+        for i in range(end - start):
+            peak = self.detected_peaks[start + i]
             self.table.setItem(i, 0, QTableWidgetItem(f"{peak.wavelength:.5f}"))
             self.table.setItem(i, 1, QTableWidgetItem(f"{peak.intensity:.6g}"))
+
+        self._table_page_label.setText(f"Page {self._table_page + 1} / {n_pages}")
+        self._table_prev_btn.setEnabled(self._table_page > 0)
+        self._table_next_btn.setEnabled(self._table_page < n_pages - 1)
+        self._table_count_label.setText(f"{n_total:,} peaks total")
     
     def _on_save_clicked(self):
         """Save detected peaks — user picks a directory, filenames get a timestamp."""

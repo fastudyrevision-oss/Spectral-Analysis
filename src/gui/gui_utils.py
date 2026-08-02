@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QFont
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as _NavigationToolbar2QT
 from matplotlib.figure import Figure
 
 from src import setup_logger
@@ -29,6 +30,91 @@ from src.gui.theme import (
 )
 
 logger = setup_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# High-DPI save toolbar
+# ---------------------------------------------------------------------------
+
+class HighDpiToolbar(_NavigationToolbar2QT):
+    """
+    NavigationToolbar2QT subclass that saves PNG/raster at 300 DPI.
+
+    The standard save dialog is used unchanged (all formats, default
+    selection). For raster formats (PNG, JPG, TIFF …) the figure is
+    re-drawn at 2× its screen size before saving so content is freshly
+    rendered at high resolution — not upscaled. Antialiasing is forced
+    on for the export. The on-screen figure is completely unaffected.
+    Vector formats (SVG, PDF, EPS) are saved as-is.
+    """
+
+    EXPORT_DPI   = 300
+    EXPORT_SCALE = 2.0
+
+    def save_figure(self, *args):
+        import os
+        import matplotlib as mpl
+        from PyQt6 import QtWidgets
+
+        # ── Standard save dialog (unchanged from base class) ──────────────
+        filetypes = self.canvas.get_supported_filetypes_grouped()
+        sorted_filetypes = sorted(filetypes.items())
+        default_filetype = self.canvas.get_default_filetype()
+
+        startpath = os.path.expanduser(mpl.rcParams['savefig.directory'])
+        start = os.path.join(startpath, self.canvas.get_default_filename())
+
+        filters, selected_filter = [], None
+        for name, exts in sorted_filetypes:
+            exts_list = " ".join([f"*.{ext}" for ext in exts])
+            filt = f"{name} ({exts_list})"
+            if default_filetype in exts:
+                selected_filter = filt
+            filters.append(filt)
+
+        fname, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self.canvas.parent(), "Choose a filename to save to",
+            start, ";;".join(filters), selected_filter)
+
+        if not fname:
+            return
+
+        if startpath != "":
+            mpl.rcParams['savefig.directory'] = os.path.dirname(fname)
+
+        # ── Save with quality settings ────────────────────────────────────
+        fig = self.canvas.figure
+        orig_size = fig.get_size_inches().copy()
+        orig_dpi  = fig.get_dpi()
+
+        ext = os.path.splitext(fname)[1].lower().lstrip(".")
+        is_raster = ext in ("png", "jpg", "jpeg", "tiff", "tif", "bmp")
+
+        try:
+            if is_raster:
+                fig.set_size_inches(orig_size[0] * self.EXPORT_SCALE,
+                                    orig_size[1] * self.EXPORT_SCALE,
+                                    forward=False)
+                with mpl.rc_context({
+                    "lines.antialiased": True,
+                    "patch.antialiased": True,
+                    "text.antialiased":  True,
+                    "path.simplify":     False,
+                    "agg.path.chunksize": 0,
+                }):
+                    fig.savefig(fname, dpi=self.EXPORT_DPI,
+                                bbox_inches="tight", pad_inches=0.15)
+            else:
+                fig.savefig(fname, bbox_inches="tight", pad_inches=0.15)
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self, "Error saving file", str(e),
+                QtWidgets.QMessageBox.StandardButton.Ok,
+                QtWidgets.QMessageBox.StandardButton.NoButton)
+        finally:
+            fig.set_size_inches(orig_size[0], orig_size[1], forward=False)
+            fig.set_dpi(orig_dpi)
+            self.canvas.draw_idle()
 
 
 class WorkerThread(QThread):
@@ -369,59 +455,126 @@ class FileHistory:
 
 class NotesPanel(QWidget):
     """
-    Notes/status panel — shows live application log output.
+    Collapsible application log panel.
 
-    A Qt-safe logging handler (QtLogHandler) is attached to the root logger
-    during __init__ so that every logger.info/warning/error call across all
-    modules automatically appears here in real time.
+    Starts collapsed — only the title bar is visible.  Clicking the title bar
+    (or the ▲/▼ toggle button) expands / collapses the text area.
+
+    A Qt-safe logging handler is attached to the root logger so every
+    logger.info/warning/error call appears here in real time.
     """
+
+    # Height of the text area when expanded (pixels)
+    _EXPANDED_HEIGHT = 160
 
     def __init__(self, max_lines: int = 200):
         super().__init__()
         self.max_lines = max_lines
-        self.notes = []
+        self.notes: list[str] = []
+        self._expanded = False          # start collapsed
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(5, 5, 5, 5)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # Header row
-        header_row = QHBoxLayout()
-        title = QLabel("Application Log")
-        title_font = title.font()
+        # ── Title / toggle bar ────────────────────────────────────────────
+        self._header = QWidget()
+        self._header.setFixedHeight(26)
+        self._header.setStyleSheet(
+            f"background: {C_BG_RAISED}; border-top: 1px solid {C_BORDER_SUBTLE};"
+        )
+        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        header_row = QHBoxLayout(self._header)
+        header_row.setContentsMargins(8, 0, 6, 0)
+        header_row.setSpacing(6)
+
+        self._toggle_icon = QLabel("▶")
+        self._toggle_icon.setStyleSheet(f"color: {C_TEXT_MUTED}; font-size: 8pt;")
+        header_row.addWidget(self._toggle_icon)
+
+        title_lbl = QLabel("Application Log")
+        title_font = title_lbl.font()
         title_font.setBold(True)
         title_font.setPointSize(9)
-        title.setFont(title_font)
-        header_row.addWidget(title)
-        header_row.addStretch()
+        title_lbl.setFont(title_font)
+        title_lbl.setStyleSheet(f"color: {C_TEXT};")
+        header_row.addWidget(title_lbl)
+
+        # Live "last message" preview shown while collapsed
+        self._preview_lbl = QLabel("")
+        self._preview_lbl.setStyleSheet(f"color: {C_TEXT_MUTED}; font-size: 8pt;")
+        self._preview_lbl.setMaximumWidth(600)
+        from PyQt6.QtCore import Qt as _Qt
+        self._preview_lbl.setAlignment(_Qt.AlignmentFlag.AlignLeft | _Qt.AlignmentFlag.AlignVCenter)
+        header_row.addWidget(self._preview_lbl, stretch=1)
 
         clear_btn = QPushButton("Clear")
-        clear_btn.setMaximumWidth(70)
+        clear_btn.setFixedHeight(18)
+        clear_btn.setMaximumWidth(55)
+        clear_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; border: 1px solid {C_BORDER_SUBTLE}; "
+            f"border-radius: 3px; color: {C_TEXT_MUTED}; font-size: 8pt; padding: 0 6px; }}"
+            f"QPushButton:hover {{ border-color: {C_ACCENT}; color: {C_ACCENT}; }}"
+        )
         clear_btn.clicked.connect(self.clear)
         header_row.addWidget(clear_btn)
 
-        copy_btn = QPushButton("Copy All")
-        copy_btn.setMaximumWidth(80)
+        copy_btn = QPushButton("Copy")
+        copy_btn.setFixedHeight(18)
+        copy_btn.setMaximumWidth(55)
+        copy_btn.setStyleSheet(clear_btn.styleSheet())
         copy_btn.clicked.connect(self._on_copy)
         header_row.addWidget(copy_btn)
 
-        layout.addLayout(header_row)
+        outer.addWidget(self._header)
+
+        # ── Log text area (hidden when collapsed) ─────────────────────────
+        self._body = QWidget()
+        self._body.setMaximumHeight(0)       # collapsed by default
+        self._body.setVisible(False)
+
+        body_layout = QVBoxLayout(self._body)
+        body_layout.setContentsMargins(4, 2, 4, 4)
+        body_layout.setSpacing(0)
 
         self.text_display = QPlainTextEdit()
         self.text_display.setReadOnly(True)
-        self.text_display.setMaximumHeight(150)
-        layout.addWidget(self.text_display)
+        body_layout.addWidget(self.text_display)
 
-        self.setLayout(layout)
+        outer.addWidget(self._body)
 
-        # Attach a Qt-safe log handler to the root logger.
-        # The handler emits a signal so widget updates always happen on the
-        # GUI thread, even when log calls come from worker threads.
+        # Make the header clickable
+        self._header.mousePressEvent = self._on_header_clicked
+
+        # ── Logging handler ───────────────────────────────────────────────
         self._log_handler = _QtLogHandler()
         self._log_handler.log_record.connect(self._append_log)
         self._log_handler.setFormatter(
             logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s",
                               datefmt="%H:%M:%S"))
         logging.getLogger().addHandler(self._log_handler)
+
+    # ------------------------------------------------------------------
+    # Toggle
+    # ------------------------------------------------------------------
+
+    def _on_header_clicked(self, _event=None):
+        self._expanded = not self._expanded
+        if self._expanded:
+            self._toggle_icon.setText("▼")
+            self._preview_lbl.setText("")
+            self._body.setVisible(True)
+            self._body.setMaximumHeight(self._EXPANDED_HEIGHT)
+            self.setMaximumHeight(26 + self._EXPANDED_HEIGHT)
+        else:
+            self._toggle_icon.setText("▶")
+            self._body.setMaximumHeight(0)
+            self._body.setVisible(False)
+            self.setMaximumHeight(26)
+            # Show last log line as preview
+            if self.notes:
+                self._preview_lbl.setText(self.notes[-1][:120])
 
     # ------------------------------------------------------------------
     # Public API
@@ -444,10 +597,14 @@ class NotesPanel(QWidget):
         self.text_display.setPlainText('\n'.join(self.notes))
         self.text_display.verticalScrollBar().setValue(
             self.text_display.verticalScrollBar().maximum())
+        # Keep preview label current when collapsed
+        if not self._expanded:
+            self._preview_lbl.setText(message[:120])
 
     def clear(self):
         self.notes.clear()
         self.text_display.clear()
+        self._preview_lbl.setText("")
 
     def _on_copy(self):
         from PyQt6.QtGui import QGuiApplication

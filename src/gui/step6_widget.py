@@ -20,14 +20,14 @@ from PyQt6.QtWidgets import (
     QScrollArea, QTabWidget, QProgressBar, QFileDialog,
 )
 from PyQt6.QtGui import QFont, QColor
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from src import setup_logger
 from src.core.step6_performance import PerformanceCalculator
 from src.gui.charts import ChartEngine
 from src.gui.export_engine import export_step6_csv, export_step6_png, generate_pdf_report
-from src.gui.gui_utils import WorkerThread, show_error, show_info
+from src.gui.gui_utils import HighDpiToolbar as NavigationToolbar2QT, WorkerThread, show_error, show_info
 from src.gui.theme import (
     primary_button_style, secondary_button_style, step_title_font, summary_banner_style,
     progress_bar_style, instruction_banner_style,
@@ -186,12 +186,10 @@ class Step6Widget(QWidget):
         return scroll
 
     def _create_right_panel(self) -> QWidget:
-        """Right panel: chart tab widget + summary table in a vertical splitter."""
+        """Right panel: chart tab widget + summary table as a tab."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-
-        splitter = QSplitter(Qt.Orientation.Vertical)
 
         # ── Chart tab widget ───────────────────────────────────────────
         self.chart_tabs = QTabWidget()
@@ -239,19 +237,11 @@ class Step6Widget(QWidget):
         tab14 = self._wrap_canvas(self.canvas14, self.toolbar14)
         self.chart_tabs.addTab(tab14, " Metrics")
 
-        chart_wrapper = QWidget()
-        cwl = QVBoxLayout(chart_wrapper)
-        cwl.setContentsMargins(0, 0, 0, 0)
-        cwl.addWidget(self.chart_tabs)
-        chart_wrapper.setMinimumHeight(280)
-        splitter.addWidget(chart_wrapper)
-
-        # ── Summary table ──────────────────────────────────────────────
+        # Summary table as a tab
         self.summary_table = self._create_summary_table()
-        splitter.addWidget(self.summary_table)
+        self.chart_tabs.addTab(self.summary_table, "📋 Summary Table")
 
-        splitter.setSizes([440, 260])
-        layout.addWidget(splitter)
+        layout.addWidget(self.chart_tabs)
         return panel
 
     @staticmethod
