@@ -27,11 +27,13 @@ from matplotlib.figure import Figure
 
 from src.gui.charts import ChartEngine
 from src.gui.gui_utils import HighDpiToolbar as NavigationToolbar2QT
+import src.gui.theme as _theme
 from src.gui.theme import (
     C_ACCENT, C_ACCENT2, C_SUCCESS, C_WARN, C_ERROR,
     C_BG_DEEP, C_BG_CARD, C_BG_INPUT, C_BG_PANEL,
     C_TEXT, C_TEXT2, C_TEXT_MUTED, C_BORDER,
     step_title_font, summary_banner_style, secondary_button_style,
+    get_chart_bg,
 )
 
 if TYPE_CHECKING:
@@ -43,57 +45,99 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Tiny helper — a "stat card" (coloured metric box)
+# Theme-aware helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _stat_card(title: str, value: str, colour: str = C_ACCENT2) -> QWidget:
-    """Return a compact card widget showing a metric value."""
-    card = QFrame()
-    card.setFrameShape(QFrame.Shape.StyledPanel)
-    card.setStyleSheet(
-        f"QFrame {{ background-color: {C_BG_CARD}; border: 1px solid {colour}; "
+def _card_bg() -> str:
+    return _theme.C_BG_CARD if _theme.is_dark() else _theme.L_BG_RAISED
+
+def _card_text() -> str:
+    return _theme.C_TEXT2 if _theme.is_dark() else _theme.L_TEXT2
+
+def _card_border(colour: str) -> str:
+    return colour  # accent colours work on both themes
+
+def _body_text() -> str:
+    return _theme.C_TEXT2 if _theme.is_dark() else _theme.L_TEXT2
+
+def _body_bg() -> str:
+    return "transparent"
+
+def _conclusions_bg() -> str:
+    return _theme.C_BG_CARD if _theme.is_dark() else _theme.L_BG_RAISED
+
+def _conclusions_border() -> str:
+    return _theme.C_BORDER if _theme.is_dark() else _theme.L_BORDER
+
+def _accent2() -> str:
+    return _theme.C_ACCENT2 if _theme.is_dark() else _theme.L_ACCENT2
+
+def _accent() -> str:
+    return _theme.C_ACCENT if _theme.is_dark() else _theme.L_ACCENT
+
+def _section_header_style() -> str:
+    a2 = _accent2()
+    a  = _accent()
+    return (
+        f"QLabel {{ color: {a2}; font-size: 11pt; font-weight: 700; "
+        f"border-bottom: 2px solid {a}; padding-bottom: 4px; "
+        f"background: transparent; }}"
+    )
+
+def _card_frame_style(colour: str) -> str:
+    bg = _card_bg()
+    return (
+        f"QFrame {{ background-color: {bg}; border: 1px solid {colour}; "
         f"border-left: 4px solid {colour}; border-radius: 6px; }}"
     )
-    layout = QVBoxLayout(card)
-    layout.setContentsMargins(10, 8, 10, 8)
-    layout.setSpacing(2)
 
-    val_lbl = QLabel(value)
-    val_lbl.setStyleSheet(
+def _val_label_style(colour: str) -> str:
+    return (
         f"QLabel {{ color: {colour}; font-size: 18pt; font-weight: 700; "
         f"background: transparent; border: none; }}"
     )
-    val_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-    title_lbl = QLabel(title)
-    title_lbl.setStyleSheet(
-        f"QLabel {{ color: {C_TEXT2}; font-size: 8pt; "
+def _title_label_style() -> str:
+    ct = _card_text()
+    return (
+        f"QLabel {{ color: {ct}; font-size: 8pt; "
         f"background: transparent; border: none; }}"
     )
-    title_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-    layout.addWidget(val_lbl)
-    layout.addWidget(title_lbl)
-    card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    return card
+def _subtitle_style() -> str:
+    ct = _body_text()
+    return f"QLabel {{ color: {ct}; font-size: 9pt; background: transparent; }}"
+
+def _stats_label_style() -> str:
+    ct = _body_text()
+    return f"QLabel {{ color: {ct}; font-size: 9pt; background: transparent; }}"
+
+def _conclusions_label_style() -> str:
+    bg     = _conclusions_bg()
+    border = _conclusions_border()
+    a2     = _accent2()
+    ct     = _body_text()
+    return (
+        f"QLabel {{ color: {ct}; font-size: 9pt; "
+        f"background-color: {bg}; border: 1px solid {border}; "
+        f"border-left: 4px solid {a2}; border-radius: 6px; padding: 10px; }}"
+    )
 
 
 def _section_header(text: str) -> QLabel:
     lbl = QLabel(text)
-    lbl.setStyleSheet(
-        f"QLabel {{ color: {C_ACCENT2}; font-size: 11pt; font-weight: 700; "
-        f"border-bottom: 2px solid {C_ACCENT}; padding-bottom: 4px; "
-        f"background: transparent; }}"
-    )
+    lbl.setStyleSheet(_section_header_style())
     return lbl
 
 
 def _mini_canvas(figsize=(5, 2.6), dpi=90) -> tuple[Figure, FigureCanvasQTAgg]:
+    chart_bg = get_chart_bg()
     fig = Figure(figsize=figsize, dpi=dpi)
-    fig.patch.set_facecolor("#141519")
+    fig.patch.set_facecolor(chart_bg)
     canvas = FigureCanvasQTAgg(fig)
-    canvas.setStyleSheet("background-color: #141519;")
+    canvas.setStyleSheet(f"background-color: {chart_bg};")
     canvas.setMinimumHeight(180)
     canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
     return fig, canvas
@@ -133,7 +177,8 @@ class SummaryWidget(QWidget):
         self._peak_fig,    self._peak_canvas    = _mini_canvas((5, 2.8))
         self._s1_fig,      self._s1_canvas      = _mini_canvas((5, 2.8))
         self._elem_fig,    self._elem_canvas     = _mini_canvas((5, 2.8))
-        self._score_fig,   self._score_canvas    = _mini_canvas((5, 2.8))
+        self._score_fig,   self._score_canvas    = _mini_canvas((5, 4.2))
+        self._score_canvas.setMinimumHeight(300)
         self._rank_fig,    self._rank_canvas     = _mini_canvas((5, 2.8))
         self._scatter_fig, self._scatter_canvas  = _mini_canvas((5, 2.8))
         self._vc_fig,      self._vc_canvas       = _mini_canvas((8, 2.8))
@@ -164,6 +209,7 @@ class SummaryWidget(QWidget):
 
         title = QLabel("📊  Analysis Summary")
         title.setStyleSheet(step_title_font(14))
+        self._title_lbl = title
         title_row.addWidget(title, stretch=1)
 
         self._reload_button = QPushButton("↻  Reload Data")
@@ -186,13 +232,13 @@ class SummaryWidget(QWidget):
             "click Refresh or navigate back to update."
         )
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet(
-            f"QLabel {{ color: {C_TEXT2}; font-size: 9pt; background: transparent; }}"
-        )
+        subtitle.setStyleSheet(_subtitle_style())
+        self._subtitle_lbl = subtitle
         content_layout.addWidget(subtitle)
 
         # ── Stat cards row ────────────────────────────────────────────────
-        content_layout.addWidget(_section_header("Key Metrics"))
+        self._section_key_metrics = _section_header("Key Metrics")
+        content_layout.addWidget(self._section_key_metrics)
         cards_row = QHBoxLayout()
         cards_row.setSpacing(10)
 
@@ -203,20 +249,20 @@ class SummaryWidget(QWidget):
         content_layout.addLayout(cards_row)
 
         # ── Step 1 section ────────────────────────────────────────────────
-        content_layout.addWidget(_section_header("① Baseline Correction"))
+        self._section_s1 = _section_header("① Baseline Correction")
+        content_layout.addWidget(self._section_s1)
         s1_row = QHBoxLayout()
         s1_row.setSpacing(10)
         s1_row.addWidget(self._wrap_canvas(self._s1_canvas, "Corrected Spectrum Preview"))
         self._s1_stats_lbl = QLabel("No baseline correction data available.")
         self._s1_stats_lbl.setWordWrap(True)
-        self._s1_stats_lbl.setStyleSheet(
-            f"QLabel {{ color: {C_TEXT2}; font-size: 9pt; background: transparent; }}"
-        )
+        self._s1_stats_lbl.setStyleSheet(_stats_label_style())
         s1_row.addWidget(self._s1_stats_lbl)
         content_layout.addLayout(s1_row)
 
         # ── Step 2 section ────────────────────────────────────────────────
-        content_layout.addWidget(_section_header("② Peak Detection"))
+        self._section_s2 = _section_header("② Peak Detection")
+        content_layout.addWidget(self._section_s2)
         s2_row = QHBoxLayout()
         s2_row.setSpacing(10)
         s2_row.addWidget(self._wrap_canvas(self._peak_canvas, "Peak Intensity Distribution"))
@@ -229,7 +275,8 @@ class SummaryWidget(QWidget):
         content_layout.addLayout(s2_row)
 
         # ── Step 3 section ────────────────────────────────────────────────
-        content_layout.addWidget(_section_header("③ Element Identification"))
+        self._section_s3 = _section_header("③ Element Identification")
+        content_layout.addWidget(self._section_s3)
         s3_row = QHBoxLayout()
         s3_row.setSpacing(10)
         s3_row.addWidget(self._wrap_canvas(self._elem_canvas, "Element Frequency"))
@@ -237,7 +284,8 @@ class SummaryWidget(QWidget):
         content_layout.addLayout(s3_row)
 
         # ── Step 4 section ────────────────────────────────────────────────
-        content_layout.addWidget(_section_header("④ Elemental Preferences"))
+        self._section_s4 = _section_header("④ Elemental Preferences")
+        content_layout.addWidget(self._section_s4)
         s4_row = QHBoxLayout()
         s4_row.setSpacing(10)
         s4_row.addWidget(self._wrap_canvas(self._rank_canvas, "Element Ranking"))
@@ -250,7 +298,8 @@ class SummaryWidget(QWidget):
         content_layout.addLayout(s4_row)
 
         # ── Step 5 section ────────────────────────────────────────────────
-        content_layout.addWidget(_section_header("⑤ Validation with Reference Spectra"))
+        self._section_s5 = _section_header("⑤ Validation with Reference Spectra")
+        content_layout.addWidget(self._section_s5)
         content_layout.addWidget(self._wrap_canvas(self._vc_canvas, "Validation Coefficient Distribution"))
 
         self._vc_table = self._make_small_table(
@@ -259,17 +308,14 @@ class SummaryWidget(QWidget):
         content_layout.addWidget(self._wrap_table(self._vc_table, "Validation Results"))
 
         # ── Conclusions ───────────────────────────────────────────────────
-        content_layout.addWidget(_section_header("Conclusions"))
+        self._section_conclusions = _section_header("Conclusions")
+        content_layout.addWidget(self._section_conclusions)
         self._conclusions_lbl = QLabel(
             "Run all five analysis steps, then navigate back to this tab "
             "to see an automated summary of key findings."
         )
         self._conclusions_lbl.setWordWrap(True)
-        self._conclusions_lbl.setStyleSheet(
-            f"QLabel {{ color: {C_TEXT2}; font-size: 9pt; "
-            f"background-color: {C_BG_CARD}; border: 1px solid {C_BORDER}; "
-            f"border-left: 4px solid {C_ACCENT2}; border-radius: 6px; padding: 10px; }}"
-        )
+        self._conclusions_lbl.setStyleSheet(_conclusions_label_style())
         content_layout.addWidget(self._conclusions_lbl)
         content_layout.addStretch()
 
@@ -288,27 +334,22 @@ class SummaryWidget(QWidget):
         """Create a stat card, add to layout, return the value QLabel."""
         card = QFrame()
         card.setFrameShape(QFrame.Shape.StyledPanel)
-        card.setStyleSheet(
-            f"QFrame {{ background-color: {C_BG_CARD}; border: 1px solid {colour}; "
-            f"border-left: 4px solid {colour}; border-radius: 6px; }}"
-        )
+        card.setStyleSheet(_card_frame_style(colour))
         cl = QVBoxLayout(card)
         cl.setContentsMargins(10, 8, 10, 8)
         cl.setSpacing(2)
         val_lbl = QLabel(value)
-        val_lbl.setStyleSheet(
-            f"QLabel {{ color: {colour}; font-size: 18pt; font-weight: 700; "
-            f"background: transparent; border: none; }}"
-        )
+        val_lbl.setStyleSheet(_val_label_style(colour))
         title_lbl = QLabel(title)
-        title_lbl.setStyleSheet(
-            f"QLabel {{ color: {C_TEXT2}; font-size: 8pt; "
-            f"background: transparent; border: none; }}"
-        )
+        title_lbl.setStyleSheet(_title_label_style())
         cl.addWidget(val_lbl)
         cl.addWidget(title_lbl)
         card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout.addWidget(card)
+        # Store card frame ref for theme updates
+        if not hasattr(self, '_card_frames'):
+            self._card_frames: list[tuple[QFrame, QLabel, QLabel, str]] = []
+        self._card_frames.append((card, val_lbl, title_lbl, colour))
         return val_lbl
 
     def _wrap_canvas(self, canvas: FigureCanvasQTAgg, title: str) -> QGroupBox:
@@ -337,6 +378,52 @@ class SummaryWidget(QWidget):
         hdr = t.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         return t
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Theme
+    # ──────────────────────────────────────────────────────────────────────
+
+    def apply_theme(self) -> None:
+        """Refresh all inline styles and chart backgrounds when theme changes."""
+        chart_bg = get_chart_bg()
+
+        # Section headers
+        for lbl in [self._section_key_metrics, self._section_s1, self._section_s2,
+                    self._section_s3, self._section_s4, self._section_s5,
+                    self._section_conclusions]:
+            lbl.setStyleSheet(_section_header_style())
+
+        # Title, subtitle, stat text
+        self._title_lbl.setStyleSheet(step_title_font(14))
+        self._subtitle_lbl.setStyleSheet(_subtitle_style())
+        self._s1_stats_lbl.setStyleSheet(_stats_label_style())
+        self._conclusions_lbl.setStyleSheet(_conclusions_label_style())
+
+        # Action buttons
+        from src.gui.theme import secondary_button_style
+        self._reload_button.setStyleSheet(secondary_button_style())
+        self._clear_button.setStyleSheet(secondary_button_style())
+
+        # Stat cards
+        if hasattr(self, '_card_frames'):
+            for card, val_lbl, title_lbl, colour in self._card_frames:
+                card.setStyleSheet(_card_frame_style(colour))
+                title_lbl.setStyleSheet(_title_label_style())
+                # val_lbl colour stays the accent — no change needed
+
+        # Chart canvases
+        for fig, canvas in [
+            (self._s1_fig,      self._s1_canvas),
+            (self._peak_fig,    self._peak_canvas),
+            (self._elem_fig,    self._elem_canvas),
+            (self._score_fig,   self._score_canvas),
+            (self._rank_fig,    self._rank_canvas),
+            (self._scatter_fig, self._scatter_canvas),
+            (self._vc_fig,      self._vc_canvas),
+        ]:
+            fig.patch.set_facecolor(chart_bg)
+            canvas.setStyleSheet(f"background-color: {chart_bg};")
+            canvas.draw()
 
     # ──────────────────────────────────────────────────────────────────────
     # Placeholder rendering
@@ -420,10 +507,10 @@ class SummaryWidget(QWidget):
             try:
                 wl = np.asarray(data.wavelength)
                 corr = np.asarray(data.corrected)
-                ax.plot(wl, corr, color="#3FA9F5", linewidth=0.9, alpha=0.95)
-                ax.set_xlabel("Wavelength (nm)", color="#AEB7C4", fontsize=8)
-                ax.set_ylabel("Intensity", color="#AEB7C4", fontsize=8)
-                ax.set_title("Corrected Spectrum", color="#F0F2F5", fontsize=9)
+                ax.plot(wl, corr, color=C_ACCENT, linewidth=0.9, alpha=0.95)
+                ax.set_xlabel("Wavelength (nm)", fontsize=8)
+                ax.set_ylabel("Intensity", fontsize=8)
+                ax.set_title("Corrected Spectrum", fontsize=9)
                 ChartEngine.apply_dark_style(fig, ax)
                 pts = len(wl)
                 rng = f"{wl.min():.2f} – {wl.max():.2f} nm"
@@ -546,7 +633,7 @@ class SummaryWidget(QWidget):
             for i, (_, row) in enumerate(top.iterrows()):
                 self._rank_table.setItem(i, 0, QTableWidgetItem(str(row['Element'])))
                 self._rank_table.setItem(i, 1, QTableWidgetItem(str(int(row['Wins']))))
-                self._rank_table.setItem(i, 2, QTableWidgetItem(f"{row['Total_Score']:.2f}"))
+                self._rank_table.setItem(i, 2, QTableWidgetItem(f"{row['Total_Score']:.3e}"))
             primary = str(results.get('primary_element', '—'))
             self._card_primary.setText(primary)
         else:
@@ -582,8 +669,19 @@ class SummaryWidget(QWidget):
                 self._vc_table.setItem(i, 1, QTableWidgetItem(vc_str))
                 from PyQt6.QtGui import QColor
                 quality_item = QTableWidgetItem(tier)
-                quality_item.setBackground(QColor(bg))
-                quality_item.setForeground(QColor(fg))
+                # Always use white text on colored backgrounds — these accent
+                # colors (SUCCESS, WARN, ERROR, ACCENT) are all dark enough to
+                # carry white text on both themes.  For the "Failed" tier the
+                # bg returned by classify_vc is C_BG_CARD (dark) which is
+                # invisible in light mode, so we override it with a neutral grey.
+                if tier == "Failed":
+                    cell_bg  = "#888888" if not _theme.is_dark() else "#4A4F60"
+                    cell_fg  = "#FFFFFF"
+                else:
+                    cell_bg  = bg    # accent colors — always dark enough
+                    cell_fg  = "#FFFFFF"
+                quality_item.setBackground(QColor(cell_bg))
+                quality_item.setForeground(QColor(cell_fg))
                 self._vc_table.setItem(i, 2, quality_item)
 
             valid = vresults['Validation_Coefficient'].dropna()

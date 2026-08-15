@@ -187,17 +187,19 @@ class CSVReader:
     def read_nist_database(self, filepath: str) -> pd.DataFrame:
         """
         Read NIST database with flexible column mapping.
-        
+
+        Supports .csv, .xlsx, .csv.xlsx, and .scv.xlsx file formats.
+
         Parameters
         ----------
         filepath : str
-            Path to NIST CSV file
-        
+            Path to NIST database file (.csv or .xlsx)
+
         Returns
         -------
         pd.DataFrame
             NIST database with standardized columns
-        
+
         Raises
         ------
         FileIOError
@@ -206,10 +208,16 @@ class CSVReader:
             If wavelength column not found
         """
         logger.info(f"Reading NIST database from: {filepath}")
-        
+
         try:
-            delimiter = self.detect_delimiter(filepath) if self.auto_detect_delimiter else ','
-            df = pd.read_csv(filepath, sep=delimiter, skiprows=0)
+            name_lower = Path(filepath).name.lower()
+            if (name_lower.endswith(".xlsx") or
+                    name_lower.endswith(".csv.xlsx") or
+                    name_lower.endswith(".scv.xlsx")):
+                df = pd.read_excel(filepath)
+            else:
+                delimiter = self.detect_delimiter(filepath) if self.auto_detect_delimiter else ","
+                df = pd.read_csv(filepath, sep=delimiter, skiprows=0)
             df.columns = df.columns.str.strip()
             
             logger.debug(f"NIST CSV loaded. Columns: {list(df.columns)}")

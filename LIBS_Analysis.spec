@@ -1,36 +1,46 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
 PyInstaller spec for LIBS Spectral Analysis Software
-Produces:  dist/LIBS_Analysis/LIBS_Analysis.exe  (plus all required DLLs)
+Produces:  dist/LIBS_Analysis/LIBS_Analysis.exe
 
 Build:  pyinstaller LIBS_Analysis.spec --clean
+
+Requires:  PyInstaller >= 6.x, NumPy >= 2.x
+
+Delivery layout
+---------------
+dist/LIBS_Analysis/
+  LIBS_Analysis.exe
+  NIST database/            <- sits BESIDE the exe, user-editable
+    Neutral lines/          <- user can drop new CSV/XLSX files here
+    Ionic lines/
+  src/                      <- frozen Python bytecode
+  _internal/                <- DLLs: scipy, matplotlib, PyQt6
 """
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-block_cipher = None
+# NOTE: block_cipher / cipher removed in PyInstaller 6.x
 
-# ── Collect data files from heavy packages ────────────────────────────────────
-scipy_datas   = collect_data_files('scipy')
-mpl_datas     = collect_data_files('matplotlib')
-pyqt6_datas   = collect_data_files('PyQt6')
+# ── Collect data files from heavy packages ─────────────────────────────────
+scipy_datas = collect_data_files('scipy')
+mpl_datas   = collect_data_files('matplotlib')
+pyqt6_datas = collect_data_files('PyQt6')
 
 a = Analysis(
     ['gui_launcher.py'],
     pathex=['.'],
     binaries=[],
     datas=[
-        # Application source tree
+        # Application source tree (frozen Python modules)
         ('src', 'src'),
-        # NIST database CSVs (lives under data/)
-        ('data', 'data'),
         # Heavy library data
         *scipy_datas,
         *mpl_datas,
         *pyqt6_datas,
     ],
     hiddenimports=[
-        # scipy sparse / signal
+        # scipy
         'scipy.sparse',
         'scipy.sparse.linalg',
         'scipy.sparse._csr',
@@ -50,14 +60,13 @@ a = Analysis(
         'PyQt6.QtGui',
         'PyQt6.QtWidgets',
         'PyQt6.sip',
-        # pandas internals
+        # pandas
         'pandas._libs.tslibs.np_datetime',
         'pandas._libs.tslibs.nattype',
         'pandas._libs.tslibs.timedeltas',
-        # numpy
-        'numpy.core._methods',
+        # numpy — NOTE: numpy.core._methods removed in NumPy 2.x, do NOT include
         'numpy.lib.format',
-        # reportlab (PDF export — optional, gracefully absent at runtime)
+        # reportlab (PDF export, optional)
         'reportlab',
         'reportlab.platypus',
         'reportlab.lib',
@@ -65,7 +74,9 @@ a = Analysis(
         'reportlab.lib.units',
         'reportlab.lib.colors',
         'reportlab.lib.enums',
-        # all src submodules
+        # Windows registry (nist_loader uses this to find ProgramData path)
+        'winreg',
+        # All src submodules
         *collect_submodules('src'),
     ],
     hookspath=[],
@@ -78,21 +89,20 @@ a = Analysis(
         '_pytest', 'pytest',
     ],
     noarchive=False,
-    cipher=block_cipher,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
     a.scripts,
     [],
-    exclude_binaries=True,      # folder-mode build (smaller, faster startup)
+    exclude_binaries=True,
     name='LIBS_Analysis',
     debug=False,
     strip=False,
-    upx=False,                  # skip UPX to avoid AV false-positives
-    console=False,              # no console window
+    upx=False,
+    console=False,
     icon=None,
 )
 
@@ -101,6 +111,9 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
+    # NIST database copied beside the exe so users can freely add/edit files.
+    # Uses Tree() so all CSV/XLSX files and subdirectories are included.
+    Tree('NIST database', prefix='NIST database'),
     strip=False,
     upx=False,
     name='LIBS_Analysis',

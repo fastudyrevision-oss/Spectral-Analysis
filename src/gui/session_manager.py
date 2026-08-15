@@ -8,14 +8,34 @@ failure (log only) so a broken session never blocks the application.
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from pathlib import Path
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# .session/ lives next to src/ at the workspace root
-SESSION_DIR = Path(__file__).resolve().parent.parent.parent / ".session"
+
+def _session_dir() -> Path:
+    """
+    Return a writable directory for session files.
+
+    - Frozen (installed exe) → %APPDATA%\\LIBS_Analysis\\.session\\
+    - Development            → .session\\ beside the project root
+    """
+    if getattr(sys, "frozen", False):
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            d = Path(appdata) / "LIBS_Analysis" / ".session"
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+    # Development: session_manager.py is in src/gui/, root is 3 levels up
+    return Path(__file__).resolve().parent.parent.parent / ".session"
+
+
+# Resolve once at import time
+SESSION_DIR = _session_dir()
 
 
 def _ensure_dir() -> None:

@@ -633,11 +633,8 @@ class Step6Widget(QWidget):
             # Format display strings
             vc_str   = f"{mean_vc:.3f}"  if mean_vc  is not None else "N/A"
             d_str    = f"{avg_d:.4f}"    if avg_d    is not None else "N/A"
-            # Score: use scientific notation for very large values
-            if avg_s is not None:
-                s_str = f"{avg_s:.3e}" if abs(avg_s) > 1e6 else f"{avg_s:.4f}"
-            else:
-                s_str = "N/A"
+            # Score: always use scientific notation for consistency
+            s_str    = f"{avg_s:.3e}"    if avg_s    is not None else "N/A"
             best_str = ",  ".join(f"{w:.2f}" for w in best_wls) if best_wls else "—"
 
             # Col 0: Element name — plain, no colour

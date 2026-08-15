@@ -64,8 +64,8 @@ C_ROW_ALT    = "#2A2F3E"
 C_ROW_HOVER  = "#374060"
 C_SELECTION  = "#3FA9F5"
 
-C_TAB_ACTIVE   = "#2F3443"
-C_TAB_INACTIVE = "#1E1F26"
+C_TAB_ACTIVE   = "#FFFFFF"
+C_TAB_INACTIVE = "#E8EAF0"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Full application stylesheet
@@ -104,24 +104,24 @@ QTabWidget::pane {{
 }}
 
 QTabBar {{
-    background-color: {C_BG_BASE};
+    background-color: #FFFFFF;
     qproperty-drawBase: 0;
 }}
 
 QTabBar::tab {{
-    background-color: {C_TAB_INACTIVE};
-    color: {C_TEXT_MUTED};
+    background-color: #FFFFFF;
+    color: #2A2D3A;
     border: none;
     border-bottom: 3px solid transparent;
     padding: 9px 20px 8px 20px;
     margin-right: 1px;
-    font-weight: 500;
+    font-weight: 600;
     font-size: 9pt;
     min-width: 130px;
 }}
 
 QTabBar::tab:selected {{
-    background-color: {C_TAB_ACTIVE};
+    background-color: #FFFFFF;
     color: {C_ACCENT};
     border-bottom: 3px solid {C_ACCENT};
     font-weight: 700;
@@ -129,9 +129,9 @@ QTabBar::tab:selected {{
 }}
 
 QTabBar::tab:hover:!selected {{
-    background-color: {C_BG_RAISED};
-    color: {C_TEXT2};
-    border-bottom: 3px solid {C_BORDER};
+    background-color: #EEF2FF;
+    color: #1A1C24;
+    border-bottom: 3px solid #AABBDD;
 }}
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -609,13 +609,30 @@ def primary_button_style(color: str = C_ACCENT) -> str:
 
 
 def secondary_button_style(color: str = C_BORDER) -> str:
-    """Secondary / ghost button — outlined, no fill."""
-    text_colour = C_TEXT if is_dark() else L_TEXT
+    """Secondary / ghost button — solid background for both themes."""
+    if is_dark():
+        bg         = C_BG_INPUT
+        text       = C_TEXT
+        border     = C_BORDER
+        hover_bg   = C_BG_RAISED
+        hover_text = C_TEXT
+        hover_bdr  = C_ACCENT
+        dis_text   = C_TEXT_MUTED
+        dis_bdr    = C_BORDER_SUBTLE
+    else:
+        bg         = L_BG_INPUT
+        text       = L_TEXT
+        border     = L_BORDER
+        hover_bg   = L_BG_RAISED
+        hover_text = L_TEXT
+        hover_bdr  = L_ACCENT
+        dis_text   = L_TEXT_MUTED
+        dis_bdr    = L_BORDER_SUBTLE
     return (
         f"QPushButton {{"
-        f"  background-color: transparent;"
-        f"  color: {text_colour};"
-        f"  border: 1px solid {color};"
+        f"  background-color: {bg};"
+        f"  color: {text};"
+        f"  border: 1px solid {border};"
         f"  border-radius: 6px;"
         f"  padding: 6px 16px;"
         f"  font-weight: 600;"
@@ -623,16 +640,18 @@ def secondary_button_style(color: str = C_BORDER) -> str:
         f"  min-height: 28px;"
         f"}}"
         f"QPushButton:hover {{"
-        f"  background-color: rgba(63,169,245,0.10);"
-        f"  border-color: {C_ACCENT};"
-        f"  color: {C_ACCENT};"
+        f"  background-color: {hover_bg};"
+        f"  border-color: {hover_bdr};"
+        f"  color: {hover_text};"
         f"}}"
         f"QPushButton:pressed {{"
-        f"  background-color: rgba(63,169,245,0.18);"
+        f"  background-color: {hover_bg};"
+        f"  border-color: {hover_bdr};"
+        f"  color: {hover_bdr};"
         f"}}"
         f"QPushButton:disabled {{"
-        f"  color: {C_TEXT_MUTED};"
-        f"  border-color: {C_BORDER_SUBTLE};"
+        f"  color: {dis_text};"
+        f"  border-color: {dis_bdr};"
         f"}}"
     )
 
@@ -645,7 +664,7 @@ def instruction_banner_style() -> str:
         border = C_ACCENT2
     else:
         bg = "#EEF4FF"
-        text = L_TEXT2
+        text = L_TEXT
         border = L_ACCENT2
     return (
         f"QLabel {{"
@@ -663,7 +682,7 @@ def instruction_banner_style() -> str:
 
 def step_title_font(size: int = 13) -> str:
     """Step title label style."""
-    text_colour = C_TEXT if is_dark() else L_TEXT
+    text_colour = C_TEXT if is_dark() else "#000000"
     return (
         f"QLabel {{"
         f"  color: {text_colour};"
@@ -684,7 +703,7 @@ def summary_banner_style() -> str:
         border = C_ACCENT
     else:
         bg = "#EEF4FF"
-        text = L_TEXT2
+        text = L_TEXT
         border = L_ACCENT
     return (
         f"QLabel {{"
@@ -794,31 +813,31 @@ QTabWidget::pane {{
     border-top: 2px solid {L_BORDER};
 }}
 QTabBar {{
-    background-color: {L_BG_BASE};
+    background-color: #1A1C24;
     qproperty-drawBase: 0;
 }}
 QTabBar::tab {{
-    background-color: {L_TAB_INACTIVE};
-    color: {L_TEXT_MUTED};
+    background-color: #1A1C24;
+    color: #D0D4E0;
     border: none;
     border-bottom: 3px solid transparent;
     padding: 9px 20px 8px 20px;
     margin-right: 1px;
-    font-weight: 500;
+    font-weight: 600;
     font-size: 9pt;
     min-width: 130px;
 }}
 QTabBar::tab:selected {{
-    background-color: {L_TAB_ACTIVE};
+    background-color: #1A1C24;
     color: {L_ACCENT};
     border-bottom: 3px solid {L_ACCENT};
     font-weight: 700;
     font-size: 9pt;
 }}
 QTabBar::tab:hover:!selected {{
-    background-color: {L_BG_RAISED};
-    color: {L_TEXT2};
-    border-bottom: 3px solid {L_BORDER};
+    background-color: #2D3042;
+    color: #FFFFFF;
+    border-bottom: 3px solid #5566AA;
 }}
 
 QGroupBox {{

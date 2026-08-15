@@ -384,8 +384,9 @@ class ChartEngine:
                     ax.text(mid, text_y,
                             wl_text,
                             ha="center", va="center",
-                            color="#FFFFFF", fontsize=6.5,
-                            alpha=0.92,
+                            color="#FFFFFF", fontsize=8.5,
+                            fontweight="bold",
+                            alpha=0.95,
                             linespacing=1.4)
 
             ax.set_title("Validation Coefficient Distribution", color=C_TEXT,

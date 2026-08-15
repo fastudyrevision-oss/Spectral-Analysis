@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QDoubleSpinBox,
     QFileDialog, QSpinBox, QSplitter, QProgressBar, QScrollArea, QTabWidget,
-    QCheckBox,
+    QCheckBox, QFrame,
 )
 from PyQt6.QtGui import QFont, QColor
 
@@ -27,7 +27,7 @@ from src.core.step5_validation import ValidationAnalyzer
 from src.io.file_reader import CSVReader
 from src.gui.gui_utils import (
     HighDpiToolbar as NavigationToolbar2QT,
-    FileSelector, WorkerThread,
+    FileSelector, WorkerThread, FileHistory, RecentFilesButton,
     show_error, show_info
 )
 from src.gui.charts import ChartEngine
@@ -36,6 +36,7 @@ from src.gui.theme import (
     primary_button_style, instruction_banner_style, step_title_font,
     summary_banner_style, mean_vc_label_style, progress_bar_style,
     get_chart_bg,
+    C_TEXT_MUTED, C_ACCENT2,
 )
 
 logger = setup_logger(__name__)
@@ -67,6 +68,15 @@ class Step5Widget(QWidget):
         self._overlay_page = 0
         self._overlay_page_size = 4   # 2×2 grid — larger, more readable charts
 
+        # Role-scoped recent-file histories
+        self._processed_history = FileHistory(role="step5_processed")
+        self._reference_history = FileHistory(role="step5_reference")
+        self._wavelengths_history = FileHistory(role="step5_wavelengths")
+
+        # Stored file paths (replaces FileSelector)
+        self._processed_path: Path | None = None
+        self._reference_path: Path | None = None
+
         logger.info("Initializing Step 5 widget")
 
         main_layout = QHBoxLayout(self)
@@ -90,6 +100,7 @@ class Step5Widget(QWidget):
         title.setFont(tf)
         title.setStyleSheet(step_title_font(13))
         layout.addWidget(title)
+        self._title_label = title
 
         self.summary_banner = QLabel("Run validation to see summary")
         self.summary_banner.setStyleSheet(summary_banner_style())
@@ -116,13 +127,75 @@ class Step5Widget(QWidget):
         instructions.setWordWrap(True)
         instructions.setStyleSheet(instruction_banner_style())
         layout.addWidget(instructions)
+        self._instructions_label = instructions
 
         files_group = QGroupBox("Input Spectra")
         fl = QVBoxLayout()
-        self.processed_selector = FileSelector("Processed Spectrum:", "CSV Files (*.csv)")
-        fl.addWidget(self.processed_selector)
-        self.reference_selector = FileSelector("Reference Spectrum:", "CSV Files (*.csv)")
-        fl.addWidget(self.reference_selector)
+        fl.setContentsMargins(6, 8, 6, 8)
+        fl.setSpacing(8)
+
+        # ── Processed Spectrum ────────────────────────────────────────────
+        proc_lbl = QLabel("Processed Spectrum (Step 1 output):")
+        proc_lbl.setStyleSheet("font-size: 9pt; font-weight: 600;")
+        fl.addWidget(proc_lbl)
+
+        proc_path_row = QHBoxLayout()
+        proc_path_row.setSpacing(4)
+        self._proc_path_label = QLabel("(No file selected)")
+        self._proc_path_label.setStyleSheet(
+            f"font-size: 9pt; font-style: italic; color: {C_TEXT_MUTED}; "
+            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+        self._proc_path_label.setWordWrap(False)
+        proc_path_row.addWidget(self._proc_path_label, stretch=1)
+        proc_browse_btn = QPushButton("Browse…")
+        proc_browse_btn.setFixedWidth(70)
+        proc_browse_btn.setFixedHeight(26)
+        proc_browse_btn.clicked.connect(self._on_browse_processed)
+        proc_path_row.addWidget(proc_browse_btn)
+        fl.addLayout(proc_path_row)
+
+        proc_recent_row = QHBoxLayout()
+        proc_recent_row.setSpacing(4)
+        self._proc_recent_btn = RecentFilesButton(self._processed_history)
+        self._proc_recent_btn.file_selected.connect(self._on_recent_processed)
+        proc_recent_row.addWidget(self._proc_recent_btn)
+        proc_recent_row.addStretch()
+        fl.addLayout(proc_recent_row)
+
+        # Divider
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("color: #3A4055;")
+        fl.addWidget(divider)
+
+        # ── Reference Spectrum ────────────────────────────────────────────
+        ref_lbl = QLabel("Reference Spectrum (pure-element CSV):")
+        ref_lbl.setStyleSheet("font-size: 9pt; font-weight: 600;")
+        fl.addWidget(ref_lbl)
+
+        ref_path_row = QHBoxLayout()
+        ref_path_row.setSpacing(4)
+        self._ref_path_label = QLabel("(No file selected)")
+        self._ref_path_label.setStyleSheet(
+            f"font-size: 9pt; font-style: italic; color: {C_TEXT_MUTED}; "
+            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+        self._ref_path_label.setWordWrap(False)
+        ref_path_row.addWidget(self._ref_path_label, stretch=1)
+        ref_browse_btn = QPushButton("Browse…")
+        ref_browse_btn.setFixedWidth(70)
+        ref_browse_btn.setFixedHeight(26)
+        ref_browse_btn.clicked.connect(self._on_browse_reference)
+        ref_path_row.addWidget(ref_browse_btn)
+        fl.addLayout(ref_path_row)
+
+        ref_recent_row = QHBoxLayout()
+        ref_recent_row.setSpacing(4)
+        self._ref_recent_btn = RecentFilesButton(self._reference_history)
+        self._ref_recent_btn.file_selected.connect(self._on_recent_reference)
+        ref_recent_row.addWidget(self._ref_recent_btn)
+        ref_recent_row.addStretch()
+        fl.addLayout(ref_recent_row)
+
         files_group.setLayout(fl)
         layout.addWidget(files_group)
 
@@ -162,17 +235,38 @@ class Step5Widget(QWidget):
 
         lines_group = QGroupBox("Target Wavelengths (nm)")
         ll = QVBoxLayout()
+        ll.setContentsMargins(6, 8, 6, 8)
+        ll.setSpacing(4)
+
+        # Status label — shows count of loaded wavelengths
         self.wavelengths_label = QLabel("No wavelengths specified")
         self.wavelengths_label.setWordWrap(True)
         ll.addWidget(self.wavelengths_label)
-        wl_btns = QHBoxLayout()
+
+        # Path label — shows the last loaded wavelengths file
+        self._wl_path_label = QLabel("(No file loaded)")
+        self._wl_path_label.setStyleSheet(
+            f"font-size: 9pt; font-style: italic; color: {C_TEXT_MUTED}; "
+            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+        self._wl_path_label.setWordWrap(False)
+        ll.addWidget(self._wl_path_label)
+
+        # Browse + Recent row
+        wl_file_row = QHBoxLayout()
+        wl_file_row.setSpacing(4)
         self.load_lines_button = QPushButton("Load from File…")
         self.load_lines_button.clicked.connect(self._on_load_wavelengths)
-        wl_btns.addWidget(self.load_lines_button)
+        wl_file_row.addWidget(self.load_lines_button)
+        self._wl_recent_btn = RecentFilesButton(self._wavelengths_history)
+        self._wl_recent_btn.file_selected.connect(self._on_recent_wavelengths)
+        wl_file_row.addWidget(self._wl_recent_btn)
+        ll.addLayout(wl_file_row)
+
+        # Manual entry on its own row
         self.manual_lines_button = QPushButton("Enter Manually…")
         self.manual_lines_button.clicked.connect(self._on_manual_wavelengths)
-        wl_btns.addWidget(self.manual_lines_button)
-        ll.addLayout(wl_btns)
+        ll.addWidget(self.manual_lines_button)
+
         lines_group.setLayout(ll)
         layout.addWidget(lines_group)
 
@@ -341,12 +435,60 @@ class Step5Widget(QWidget):
 
     def apply_theme(self):
         """Update chart backgrounds when the global theme changes."""
+        from src.gui.theme import step_title_font, instruction_banner_style, summary_banner_style
         chart_bg = get_chart_bg()
         for fig, canvas in [(self.vc_fig,      self.vc_canvas),
                              (self.overlay_fig, self.overlay_canvas)]:
             fig.patch.set_facecolor(chart_bg)
             canvas.setStyleSheet(f"background-color: {chart_bg};")
             canvas.draw()
+        self._title_label.setStyleSheet(step_title_font(13))
+        self._instructions_label.setStyleSheet(instruction_banner_style())
+        self.summary_banner.setStyleSheet(summary_banner_style())
+
+    # ──────────────────────────────────────────────────────────────────────
+    # File selection helpers
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _on_browse_processed(self):
+        fp, _ = QFileDialog.getOpenFileName(
+            self, "Select Processed Spectrum", "", "CSV Files (*.csv)")
+        if fp:
+            self._set_processed_path(Path(fp))
+
+    def _on_recent_processed(self, path_str: str):
+        self._set_processed_path(Path(path_str))
+
+    def _set_processed_path(self, path: Path):
+        self._processed_path = path
+        self._proc_path_label.setText(path.name)
+        self._proc_path_label.setStyleSheet(
+            f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
+            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+        self._proc_path_label.setToolTip(str(path))
+        self._processed_history.add_file(str(path))
+        self._proc_recent_btn.refresh()
+        logger.info(f"Processed spectrum: {path.name}")
+
+    def _on_browse_reference(self):
+        fp, _ = QFileDialog.getOpenFileName(
+            self, "Select Reference Spectrum", "", "CSV Files (*.csv)")
+        if fp:
+            self._set_reference_path(Path(fp))
+
+    def _on_recent_reference(self, path_str: str):
+        self._set_reference_path(Path(path_str))
+
+    def _set_reference_path(self, path: Path):
+        self._reference_path = path
+        self._ref_path_label.setText(path.name)
+        self._ref_path_label.setStyleSheet(
+            f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
+            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+        self._ref_path_label.setToolTip(str(path))
+        self._reference_history.add_file(str(path))
+        self._ref_recent_btn.refresh()
+        logger.info(f"Reference spectrum: {path.name}")
 
     # ──────────────────────────────────────────────────────────────────────
     # Wavelength loading
@@ -358,17 +500,37 @@ class Step5Widget(QWidget):
             "CSV Files (*.csv);;Text Files (*.txt)")
         if not filepath:
             return
+        self._load_wavelengths_from_path(filepath)
+
+    def _on_recent_wavelengths(self, path_str: str):
+        self._load_wavelengths_from_path(path_str)
+
+    def _load_wavelengths_from_path(self, filepath: str):
+        """Parse wavelengths from a CSV or text file, update UI and history."""
         try:
-            if filepath.endswith('.csv'):
+            if filepath.lower().endswith('.csv'):
                 df = pd.read_csv(filepath)
                 wavelengths = df.iloc[:, 0].values
             else:
                 with open(filepath, 'r') as f:
                     wavelengths = [float(l.strip()) for l in f if l.strip()]
             self.target_wavelengths = list(wavelengths)
+
+            # Update labels
+            name = Path(filepath).name
             self.wavelengths_label.setText(
-                f"{len(self.target_wavelengths)} wavelengths loaded")
-            logger.info(f"Loaded {len(self.target_wavelengths)} wavelengths")
+                f"✅ {len(self.target_wavelengths)} wavelengths loaded from {name}")
+            self._wl_path_label.setText(name)
+            self._wl_path_label.setStyleSheet(
+                f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
+                f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+            self._wl_path_label.setToolTip(filepath)
+
+            # Persist and refresh dropdown
+            self._wavelengths_history.add_file(filepath)
+            self._wl_recent_btn.refresh()
+
+            logger.info(f"Loaded {len(self.target_wavelengths)} wavelengths from {name}")
         except Exception as e:
             logger.error(f"Failed to load wavelengths: {e}")
             show_error("Error", f"Failed to load wavelengths:\n{e}")
@@ -383,7 +545,11 @@ class Step5Widget(QWidget):
                 self.target_wavelengths = [
                     float(l.strip()) for l in text.split('\n') if l.strip()]
                 self.wavelengths_label.setText(
-                    f"{len(self.target_wavelengths)} wavelengths entered")
+                    f"✅ {len(self.target_wavelengths)} wavelengths entered manually")
+                self._wl_path_label.setText("(entered manually)")
+                self._wl_path_label.setStyleSheet(
+                    f"font-size: 9pt; font-style: italic; color: {C_TEXT_MUTED}; "
+                    f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
                 logger.info(f"Entered {len(self.target_wavelengths)} wavelengths")
             except ValueError as e:
                 show_error("Error", f"Invalid wavelength format:\n{e}")
@@ -393,10 +559,10 @@ class Step5Widget(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _on_validate_clicked(self):
-        if self.processed_selector.get_filepath() is None:
+        if self._processed_path is None:
             show_error("Error", "Please select processed spectrum file")
             return
-        if self.reference_selector.get_filepath() is None:
+        if self._reference_path is None:
             show_error("Error", "Please select reference spectrum file")
             return
         if not self.target_wavelengths:
@@ -418,8 +584,8 @@ class Step5Widget(QWidget):
 
     def _validate_worker(self):
         try:
-            processed = pd.read_csv(str(self.processed_selector.get_filepath()))
-            reference = pd.read_csv(str(self.reference_selector.get_filepath()))
+            processed = pd.read_csv(str(self._processed_path))
+            reference = pd.read_csv(str(self._reference_path))
             params = {
                 'WINDOW': self.window_spinbox.value(),
                 'MIN_POINTS': self.min_points_spinbox.value(),

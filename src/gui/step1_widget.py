@@ -26,12 +26,13 @@ from src.io.file_writer import CSVWriter, PlotGenerator
 from src.gui.gui_utils import (
     HighDpiToolbar as NavigationToolbar2QT,
     ParameterControl, FileSelector, WorkerThread,
+    FileHistory, RecentFilesButton,
     show_error, show_info
 )
 from src.gui.theme import (
     primary_button_style, instruction_banner_style, step_title_font,
     C_BG_BASE, C_BG_RAISED, C_BORDER_SUBTLE, C_ACCENT, C_ACCENT2,
-    C_WARN, C_ERROR, C_TEXT, C_TEXT2,
+    C_WARN, C_ERROR, C_TEXT, C_TEXT2, C_TEXT_MUTED,
     get_chart_bg, get_chart_axes_bg, get_chart_text, get_chart_text2, get_chart_border,
 )
 
@@ -70,6 +71,8 @@ class Step1Widget(QWidget):
         self.worker_thread = None
         self.file_history = file_history
         self.notes_panel = notes_panel
+        self._spectrum_path: Path | None = None
+        self._spectrum_history = FileHistory(role="step1_spectrum")
 
         logger.info("Initializing Step 1 widget")
 
@@ -115,8 +118,35 @@ class Step1Widget(QWidget):
 
         file_group = QGroupBox("Input File")
         fl = QVBoxLayout()
-        self.file_selector = FileSelector("Spectrum File:", "CSV Files (*.csv)")
-        fl.addWidget(self.file_selector)
+        fl.setContentsMargins(6, 8, 6, 8)
+        fl.setSpacing(4)
+
+        file_lbl = QLabel("Raw LIBS Spectrum CSV:")
+        file_lbl.setStyleSheet("font-size: 9pt; font-weight: 600;")
+        fl.addWidget(file_lbl)
+
+        path_row = QHBoxLayout()
+        path_row.setSpacing(4)
+        self._spec_path_label = QLabel("(No file selected)")
+        self._spec_path_label.setStyleSheet(
+            f"font-size: 9pt; font-style: italic; color: {C_TEXT_MUTED}; "
+            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+        self._spec_path_label.setWordWrap(False)
+        path_row.addWidget(self._spec_path_label, stretch=1)
+        browse_btn = QPushButton("Browse…")
+        browse_btn.setFixedWidth(70)
+        browse_btn.setFixedHeight(26)
+        browse_btn.clicked.connect(self._on_browse_spectrum)
+        path_row.addWidget(browse_btn)
+        fl.addLayout(path_row)
+
+        recent_row = QHBoxLayout()
+        self._spec_recent_btn = RecentFilesButton(self._spectrum_history)
+        self._spec_recent_btn.file_selected.connect(self._on_recent_spectrum)
+        recent_row.addWidget(self._spec_recent_btn)
+        recent_row.addStretch()
+        fl.addLayout(recent_row)
+
         file_group.setLayout(fl)
         layout.addWidget(file_group)
 
@@ -337,8 +367,28 @@ class Step1Widget(QWidget):
     # Event handlers
     # ──────────────────────────────────────────────────────────────────────
 
+    def _on_browse_spectrum(self):
+        fp, _ = QFileDialog.getOpenFileName(
+            self, "Select Spectrum File", "", "CSV Files (*.csv)")
+        if fp:
+            self._set_spectrum_path(Path(fp))
+
+    def _on_recent_spectrum(self, path_str: str):
+        self._set_spectrum_path(Path(path_str))
+
+    def _set_spectrum_path(self, path: Path):
+        self._spectrum_path = path
+        self._spec_path_label.setText(path.name)
+        self._spec_path_label.setStyleSheet(
+            f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
+            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+        self._spec_path_label.setToolTip(str(path))
+        self._spectrum_history.add_file(str(path))
+        self._spec_recent_btn.refresh()
+        logger.info(f"Spectrum file selected: {path.name}")
+
     def _on_process_clicked(self):
-        if self.file_selector.get_filepath() is None:
+        if self._spectrum_path is None:
             show_error("Error", "Please select an input file")
             return
 
@@ -351,11 +401,11 @@ class Step1Widget(QWidget):
         try:
             reader = CSVReader()
             self.raw_data = reader.read_raw_spectra(
-                str(self.file_selector.get_filepath()))
+                str(self._spectrum_path))
             logger.info(f"Loaded spectrum: {len(self.raw_data.wavelength)} points")
             if self.notes_panel:
                 self.notes_panel.add_note(
-                    f"File loaded: {self.file_selector.get_filepath().name} "
+                    f"File loaded: {self._spectrum_path.name} "
                     f"({len(self.raw_data.wavelength)} points)", "SUCCESS")
         except Exception as e:
             logger.error(f"Failed to load file: {e}")
@@ -617,10 +667,10 @@ class Step1Widget(QWidget):
         for i in range(n_rows):
             idx = start + i
             self.table.setItem(i, 0, QTableWidgetItem(f"{d.wavelength[idx]:.5f}"))
-            self.table.setItem(i, 1, QTableWidgetItem(f"{d.raw[idx]:.6g}"))
-            self.table.setItem(i, 2, QTableWidgetItem(f"{d.smoothed_sg[idx]:.6g}"))
-            self.table.setItem(i, 3, QTableWidgetItem(f"{d.baseline_als[idx]:.6g}"))
-            self.table.setItem(i, 4, QTableWidgetItem(f"{d.corrected[idx]:.6g}"))
+            self.table.setItem(i, 1, QTableWidgetItem(f"{d.raw[idx]:.3e}"))
+            self.table.setItem(i, 2, QTableWidgetItem(f"{d.smoothed_sg[idx]:.3e}"))
+            self.table.setItem(i, 3, QTableWidgetItem(f"{d.baseline_als[idx]:.3e}"))
+            self.table.setItem(i, 4, QTableWidgetItem(f"{d.corrected[idx]:.3e}"))
 
         # Update pagination controls
         self._table_page_label.setText(f"Page {self._table_page + 1} / {n_pages}")

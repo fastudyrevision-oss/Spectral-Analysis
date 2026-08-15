@@ -12,7 +12,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget,
-    QFileDialog, QSplitter, QProgressBar, QScrollArea
+    QFileDialog, QSplitter, QProgressBar, QScrollArea,
+    QListWidget, QListWidgetItem, QAbstractItemView,
 )
 from PyQt6.QtGui import QFont, QColor
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -23,7 +24,7 @@ from src.config import STEP4_PARAMS
 from src.core.step4_elemental_preferences import ElementalPreferencesAnalyzer
 from src.gui.gui_utils import (
     HighDpiToolbar as NavigationToolbar2QT,
-    FileSelector, WorkerThread,
+    FileSelector, WorkerThread, FileHistory, RecentFilesButton,
     show_error, show_info
 )
 from src.gui.theme import (
@@ -57,6 +58,9 @@ class Step4Widget(QWidget):
         self.file_history = file_history
         self.notes_panel = notes_panel
 
+        # Role-scoped recent-file history for Step 4 matching files
+        self._matching_history = FileHistory(role="step4_matching")
+
         logger.info("Initializing Step 4 widget")
 
         main_layout = QHBoxLayout(self)
@@ -80,6 +84,7 @@ class Step4Widget(QWidget):
         title.setFont(tf)
         title.setStyleSheet(step_title_font(13))
         layout.addWidget(title)
+        self._title_label = title
 
         instructions = QLabel(
             "📋 Instructions: Select NIST matching result files from Step 3.\n"
@@ -90,6 +95,7 @@ class Step4Widget(QWidget):
         instructions.setWordWrap(True)
         instructions.setStyleSheet(instruction_banner_style())
         layout.addWidget(instructions)
+        self._instructions_label = instructions
 
         self.summary_banner = QLabel("Run analysis to see summary")
         self.summary_banner.setWordWrap(True)
@@ -101,16 +107,52 @@ class Step4Widget(QWidget):
         layout.addWidget(self.primary_element_label)
 
         files_group = QGroupBox("Matching Files")
-        fl = QHBoxLayout()
-        self.files_label = QLabel("No files selected")
-        self.files_label.setWordWrap(True)
-        fl.addWidget(self.files_label, stretch=1)
+        fl = QVBoxLayout()
+        fl.setContentsMargins(6, 6, 6, 6)
+        fl.setSpacing(4)
+
+        # List of queued files
+        self._files_list_widget = QListWidget()
+        self._files_list_widget.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._files_list_widget.setMaximumHeight(80)
+        self._files_list_widget.setToolTip(
+            "NIST matching result CSVs from Step 3.\n"
+            "All files are merged before analysis.\n"
+            "Select items then click Remove to delete.")
+        fl.addWidget(self._files_list_widget)
+
+        # Add / Remove / Clear row
+        file_btn_row = QHBoxLayout()
+        file_btn_row.setSpacing(4)
         self.add_files_button = QPushButton("Add Files…")
         self.add_files_button.clicked.connect(self._on_add_files)
-        fl.addWidget(self.add_files_button)
+        file_btn_row.addWidget(self.add_files_button)
+        self._remove_files_btn = QPushButton("Remove")
+        self._remove_files_btn.clicked.connect(self._on_remove_files)
+        file_btn_row.addWidget(self._remove_files_btn)
         self.clear_files_button = QPushButton("Clear")
         self.clear_files_button.clicked.connect(self._on_clear_files)
-        fl.addWidget(self.clear_files_button)
+        file_btn_row.addWidget(self.clear_files_button)
+        fl.addLayout(file_btn_row)
+
+        # Recent files dropdown
+        recent_row = QHBoxLayout()
+        recent_row.setSpacing(4)
+        self._matching_recent_btn = RecentFilesButton(
+            self._matching_history, show_add_all=True)
+        self._matching_recent_btn.file_selected.connect(self._on_recent_file_selected)
+        self._matching_recent_btn.all_selected.connect(self._on_add_all_recent)
+        recent_row.addWidget(self._matching_recent_btn)
+        recent_row.addStretch()
+        fl.addLayout(recent_row)
+
+        # Status label
+        self.files_label = QLabel("No files selected")
+        self.files_label.setWordWrap(True)
+        self.files_label.setStyleSheet("font-size: 10px; color: grey;")
+        fl.addWidget(self.files_label)
+
         files_group.setLayout(fl)
         layout.addWidget(files_group)
 
@@ -253,12 +295,16 @@ class Step4Widget(QWidget):
 
     def apply_theme(self):
         """Update chart backgrounds when the global theme changes."""
+        from src.gui.theme import step_title_font, instruction_banner_style, summary_banner_style
         chart_bg = get_chart_bg()
         for fig, canvas in [(self.ranking_fig, self.ranking_canvas),
                              (self.scatter_fig, self.scatter_canvas)]:
             fig.patch.set_facecolor(chart_bg)
             canvas.setStyleSheet(f"background-color: {chart_bg};")
             canvas.draw()
+        self._title_label.setStyleSheet(step_title_font(13))
+        self._instructions_label.setStyleSheet(instruction_banner_style())
+        self.summary_banner.setStyleSheet(summary_banner_style())
 
     # ──────────────────────────────────────────────────────────────────────
     # Event handlers
@@ -268,22 +314,70 @@ class Step4Widget(QWidget):
         files, _ = QFileDialog.getOpenFileNames(
             self, "Select NIST Matching Files", "", "CSV Files (*.csv)")
         if files:
-            self.matching_files.extend(files)
-            names = [Path(f).name for f in self.matching_files]
-            text = ", ".join(names[:3])
-            if len(names) > 3:
-                text += f" … and {len(names) - 3} more"
-            self.files_label.setText(f"✅ {len(self.matching_files)} file(s): {text}")
+            for fp in files:
+                if fp not in self.matching_files:
+                    self.matching_files.append(fp)
+                    self._files_list_widget.addItem(
+                        QListWidgetItem(Path(fp).name))
+                    self._matching_history.add_file(fp)
+            self._matching_recent_btn.refresh()
+            self._refresh_files_label()
             self.info_label.setText(
                 f"✅ {len(self.matching_files)} file(s) loaded. "
                 "Click 'Analyze Competition' to start.")
             logger.info(f"Added {len(files)} files. Total: {len(self.matching_files)}")
 
+    def _on_remove_files(self):
+        """Remove selected items from the list."""
+        rows = sorted(
+            [self._files_list_widget.row(i)
+             for i in self._files_list_widget.selectedItems()],
+            reverse=True,
+        )
+        for r in rows:
+            self._files_list_widget.takeItem(r)
+            self.matching_files.pop(r)
+        self._refresh_files_label()
+
     def _on_clear_files(self):
         self.matching_files = []
-        self.files_label.setText("No files selected")
+        self._files_list_widget.clear()
+        self._refresh_files_label()
         self.info_label.setText("Select matching files to begin analysis")
         logger.info("Cleared file selection")
+
+    def _on_recent_file_selected(self, path_str: str):
+        """Add a recently-used file from the dropdown."""
+        if path_str not in self.matching_files:
+            self.matching_files.append(path_str)
+            self._files_list_widget.addItem(
+                QListWidgetItem(Path(path_str).name))
+            self._matching_history.add_file(path_str)
+        self._matching_recent_btn.refresh()
+        self._refresh_files_label()
+
+    def _on_add_all_recent(self, paths: list):
+        """Add every file in the recent list that isn't already queued."""
+        added = 0
+        for path_str in paths:
+            if path_str not in self.matching_files:
+                self.matching_files.append(path_str)
+                self._files_list_widget.addItem(
+                    QListWidgetItem(Path(path_str).name))
+                added += 1
+        if added:
+            self._matching_recent_btn.refresh()
+            self._refresh_files_label()
+            logger.info(f"Added all recent: {added} file(s) queued")
+
+    def _refresh_files_label(self):
+        n = len(self.matching_files)
+        if n == 0:
+            self.files_label.setText("No files selected")
+            self.files_label.setStyleSheet("font-size: 10px; color: grey;")
+        else:
+            self.files_label.setText(f"✅ {n} file{'s' if n > 1 else ''} queued")
+            self.files_label.setStyleSheet("font-size: 10px; color: #4CAF50;")
 
     def _on_analyze_clicked(self):
         if not self.matching_files:
@@ -383,8 +477,8 @@ class Step4Widget(QWidget):
             self.ranking_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
             self.ranking_table.setItem(row, 1, QTableWidgetItem(str(r['Element'])))
             self.ranking_table.setItem(row, 2, QTableWidgetItem(str(int(r['Wins']))))
-            self.ranking_table.setItem(row, 3, QTableWidgetItem(f"{r['Total_Score']:.2f}"))
-            self.ranking_table.setItem(row, 4, QTableWidgetItem(f"{r['Avg_Score']:.4f}"))
+            self.ranking_table.setItem(row, 3, QTableWidgetItem(f"{r['Total_Score']:.3e}"))
+            self.ranking_table.setItem(row, 4, QTableWidgetItem(f"{r['Avg_Score']:.3e}"))
 
         winners_df = self.analysis_results['winner_lines']
         self.winners_table.setRowCount(len(winners_df))
@@ -392,7 +486,7 @@ class Step4Widget(QWidget):
             self.winners_table.setItem(row, 0, QTableWidgetItem(str(w['Winning_Element'])))
             self.winners_table.setItem(row, 1, QTableWidgetItem(f"{w['Observed_Wavelength']:.2f}"))
             self.winners_table.setItem(row, 2, QTableWidgetItem(f"{w['NIST_Matched_Wavelength']:.2f}"))
-            self.winners_table.setItem(row, 3, QTableWidgetItem(f"{w['Confidence_Score']:.4f}"))
+            self.winners_table.setItem(row, 3, QTableWidgetItem(f"{w['Confidence_Score']:.3e}"))
             self.winners_table.setItem(row, 4, QTableWidgetItem(str(int(w['Num_Competitors']))))
 
         comp_df = self.analysis_results['competition'].head(100)
@@ -400,7 +494,7 @@ class Step4Widget(QWidget):
         for row, (_, c) in enumerate(comp_df.iterrows()):
             self.competition_table.setItem(row, 0, QTableWidgetItem(f"{c['Matched_WL']:.2f}"))
             self.competition_table.setItem(row, 1, QTableWidgetItem(str(c['Winner'])))
-            self.competition_table.setItem(row, 2, QTableWidgetItem(f"{c['Max_Score']:.4f}"))
+            self.competition_table.setItem(row, 2, QTableWidgetItem(f"{c['Max_Score']:.3e}"))
             self.competition_table.setItem(row, 3, QTableWidgetItem(str(int(c['Num_Competitors']))))
 
         logger.info("Tables populated with analysis results")

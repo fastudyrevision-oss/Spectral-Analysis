@@ -6,6 +6,7 @@ Provides worker threads, plot embedding, and utility functions for the GUI.
 """
 
 import sys
+import os
 import io
 import logging
 from pathlib import Path
@@ -16,9 +17,9 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QDoubleSpinBox,
     QSlider, QFileDialog, QMessageBox, QProgressDialog, QPushButton, QComboBox,
-    QPlainTextEdit
+    QPlainTextEdit, QMenu, QToolButton,
 )
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QAction
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as _NavigationToolbar2QT
 from matplotlib.figure import Figure
@@ -422,35 +423,185 @@ def show_warning(title: str, message: str):
 # ==========================================
 
 class FileHistory:
-    """Manages file history and recent files list."""
-    
-    def __init__(self, max_items: int = 10):
+    """
+    Manages recent files list with optional disk persistence.
+
+    Files are grouped by a *role* string (e.g. 'peaks', 'spectra', 'nist')
+    so each widget shows only its own relevant history.
+
+    Storage: %APPDATA%/LIBS_Analysis/recent_files.json  (Windows)
+             ~/.config/LIBS_Analysis/recent_files.json   (Linux / Mac)
+    """
+
+    _STORAGE_PATH: Path = None   # resolved once on first use
+
+    def __init__(self, max_items: int = 15, role: str = "general"):
         """
-        Initialize file history.
-        
         Parameters
         ----------
         max_items : int
-            Maximum number of recent files to keep
+            Maximum recent files to keep per role.
+        role : str
+            Logical category for this history (e.g. 'peaks', 'spectra').
+            Keeps different widgets' histories separate.
         """
         self.max_items = max_items
-        self.history = []
-    
+        self.role      = role
+        self._data: dict = {}   # role → [path, ...]
+        self._load()
+
+    # ── Persistence helpers ───────────────────────────────────────────────────
+
+    @classmethod
+    def _storage_path(cls) -> Path:
+        if cls._STORAGE_PATH is None:
+            if sys.platform == "win32":
+                base = Path(os.environ.get("APPDATA", Path.home()))
+            else:
+                base = Path.home() / ".config"
+            cls._STORAGE_PATH = base / "LIBS_Analysis" / "recent_files.json"
+        return cls._STORAGE_PATH
+
+    def _load(self):
+        try:
+            p = self._storage_path()
+            if p.exists():
+                import json
+                self._data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            self._data = {}
+
+    def _save(self):
+        try:
+            import json
+            p = self._storage_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+        except Exception:
+            pass   # never crash the UI over a history write failure
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
     def add_file(self, filepath: str):
-        """Add file to history."""
-        if filepath in self.history:
-            self.history.remove(filepath)
-        self.history.insert(0, filepath)
-        if len(self.history) > self.max_items:
-            self.history.pop()
-    
+        """Add a file path to this role's history and persist immediately."""
+        if not filepath:
+            return
+        lst = self._data.setdefault(self.role, [])
+        if filepath in lst:
+            lst.remove(filepath)
+        lst.insert(0, filepath)
+        if len(lst) > self.max_items:
+            lst.pop()
+        self._data[self.role] = lst
+        self._save()
+
     def get_recent(self) -> list:
-        """Get recent files list."""
-        return self.history.copy()
-    
+        """Return recent files for this role (most-recent first, existing only)."""
+        raw = self._data.get(self.role, [])
+        # Filter out paths that no longer exist on disk
+        return [p for p in raw if Path(p).exists()]
+
     def clear(self):
-        """Clear history."""
-        self.history.clear()
+        """Clear history for this role and persist."""
+        self._data[self.role] = []
+        self._save()
+
+    def clear_all_roles(self):
+        """Wipe the entire history file."""
+        self._data = {}
+        self._save()
+
+
+
+
+class RecentFilesButton(QToolButton):
+    """
+    A compact "🕐 Recent" drop-down button that shows the last N files
+    for a given role.  When the user picks an entry the *file_selected*
+    signal is emitted with the absolute path string.
+
+    When ``show_add_all=True`` an "Add All Recent" action appears at the
+    top of the menu — emits *all_selected* with the full list of paths.
+
+    Designed to sit beside a QListWidget + Add/Remove/Clear row so the
+    user can re-add previously used files in one click instead of
+    navigating the file-system every time.
+
+    Usage
+    -----
+    btn = RecentFilesButton(history)          # history is a FileHistory instance
+    btn.file_selected.connect(my_callback)    # callback receives str path
+    btn.all_selected.connect(my_all_callback) # callback receives list[str]
+    btn.refresh()                             # call after history changes
+    """
+
+    file_selected = pyqtSignal(str)
+    all_selected  = pyqtSignal(list)   # emits list[str] of all recent paths
+
+    def __init__(self, history: "FileHistory", parent=None,
+                 show_add_all: bool = False):
+        super().__init__(parent)
+        self._history     = history
+        self._show_add_all = show_add_all
+        self.setText("🕐 Recent ▾")
+        self.setToolTip(
+            "Pick a recently used file.\n"
+            "Only files that still exist on disk are shown."
+        )
+        self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.setFixedHeight(24)
+        self.setStyleSheet(
+            "QToolButton { font-size: 9pt; padding: 2px 8px; }"
+            "QToolButton::menu-indicator { image: none; }"   # hide default arrow
+        )
+        self._menu = QMenu(self)
+        self.setMenu(self._menu)
+        self.refresh()
+
+    def refresh(self):
+        """Rebuild the dropdown from the current history."""
+        self._menu.clear()
+        recent = self._history.get_recent()
+        if not recent:
+            no_action = QAction("(no recent files)", self)
+            no_action.setEnabled(False)
+            self._menu.addAction(no_action)
+            self.setEnabled(False)
+            return
+
+        self.setEnabled(True)
+
+        # ── "Add All Recent" shortcut ─────────────────────────────────────
+        if self._show_add_all and len(recent) > 1:
+            add_all_action = QAction(f"➕  Add All Recent  ({len(recent)} files)", self)
+            add_all_action.setToolTip(
+                "Add every file in the recent list to the queue at once."
+            )
+            add_all_action.triggered.connect(
+                lambda checked, r=list(recent): self.all_selected.emit(r)
+            )
+            self._menu.addAction(add_all_action)
+            self._menu.addSeparator()
+
+        for path_str in recent:
+            p = Path(path_str)
+            # Show filename as label, full path as tooltip
+            action = QAction(p.name, self)
+            action.setToolTip(path_str)
+            action.setData(path_str)
+            action.triggered.connect(
+                lambda checked, ps=path_str: self.file_selected.emit(ps)
+            )
+            self._menu.addAction(action)
+
+        self._menu.addSeparator()
+        clear_action = QAction("Clear history", self)
+        clear_action.triggered.connect(self._on_clear)
+        self._menu.addAction(clear_action)
+
+    def _on_clear(self):
+        self._history.clear()
+        self.refresh()
 
 
 class NotesPanel(QWidget):
