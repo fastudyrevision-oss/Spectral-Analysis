@@ -460,14 +460,19 @@ class Step5Widget(QWidget):
         self._set_processed_path(Path(path_str))
 
     def _set_processed_path(self, path: Path):
+        # Persist first — so history is saved even if UI update throws
         self._processed_path = path
-        self._proc_path_label.setText(path.name)
-        self._proc_path_label.setStyleSheet(
-            f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
-            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
-        self._proc_path_label.setToolTip(str(path))
         self._processed_history.add_file(str(path))
-        self._proc_recent_btn.refresh()
+        # Update UI
+        try:
+            self._proc_path_label.setText(path.name)
+            self._proc_path_label.setStyleSheet(
+                f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
+                f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+            self._proc_path_label.setToolTip(str(path))
+            self._proc_recent_btn.refresh()
+        except AttributeError:
+            pass   # widget not yet fully constructed — path is stored, UI will catch up
         logger.info(f"Processed spectrum: {path.name}")
 
     def _on_browse_reference(self):
@@ -481,13 +486,16 @@ class Step5Widget(QWidget):
 
     def _set_reference_path(self, path: Path):
         self._reference_path = path
-        self._ref_path_label.setText(path.name)
-        self._ref_path_label.setStyleSheet(
-            f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
-            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
-        self._ref_path_label.setToolTip(str(path))
         self._reference_history.add_file(str(path))
-        self._ref_recent_btn.refresh()
+        try:
+            self._ref_path_label.setText(path.name)
+            self._ref_path_label.setStyleSheet(
+                f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
+                f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+            self._ref_path_label.setToolTip(str(path))
+            self._ref_recent_btn.refresh()
+        except AttributeError:
+            pass
         logger.info(f"Reference spectrum: {path.name}")
 
     # ──────────────────────────────────────────────────────────────────────
@@ -568,6 +576,12 @@ class Step5Widget(QWidget):
         if not self.target_wavelengths:
             show_error("Error", "Please specify target wavelengths")
             return
+
+        # Ensure paths are persisted to history (backfill if browse didn't save)
+        self._processed_history.add_file(str(self._processed_path))
+        self._reference_history.add_file(str(self._reference_path))
+        self._proc_recent_btn.refresh()
+        self._ref_recent_btn.refresh()
 
         self.info_label.setText("Validating spectrum…")
         self.validate_button.setEnabled(False)

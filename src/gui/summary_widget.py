@@ -411,7 +411,9 @@ class SummaryWidget(QWidget):
                 title_lbl.setStyleSheet(_title_label_style())
                 # val_lbl colour stays the accent — no change needed
 
-        # Chart canvases
+        # Chart canvases — update background then fully re-render so
+        # axis labels, titles and tick colors pick up the new theme.
+        chart_bg = get_chart_bg()
         for fig, canvas in [
             (self._s1_fig,      self._s1_canvas),
             (self._peak_fig,    self._peak_canvas),
@@ -423,7 +425,9 @@ class SummaryWidget(QWidget):
         ]:
             fig.patch.set_facecolor(chart_bg)
             canvas.setStyleSheet(f"background-color: {chart_bg};")
-            canvas.draw()
+
+        # Re-render all charts with updated theme colors
+        self.refresh()
 
     # ──────────────────────────────────────────────────────────────────────
     # Placeholder rendering
@@ -442,7 +446,8 @@ class SummaryWidget(QWidget):
             fig.clear()
             ax = fig.add_subplot(111)
             ChartEngine._show_placeholder(ax, "No data — run analysis first")
-            ChartEngine.apply_dark_style(fig, ax)
+            ChartEngine.apply_dark_style(fig, ax)   # theme-aware: respects is_dark()
+            canvas.draw()
             canvas.draw()
 
     # ──────────────────────────────────────────────────────────────────────
