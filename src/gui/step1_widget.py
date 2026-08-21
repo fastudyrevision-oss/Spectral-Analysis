@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea, QSplitter, QTabWidget,
-    QSizePolicy
+    QSizePolicy, QFileDialog,
 )
 from PyQt6.QtGui import QFont
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -683,7 +683,6 @@ class Step1Widget(QWidget):
             show_error("Error", "No processed data to save")
             return
 
-        from PyQt6.QtWidgets import QFileDialog
         from datetime import datetime
 
         save_dir = QFileDialog.getExistingDirectory(

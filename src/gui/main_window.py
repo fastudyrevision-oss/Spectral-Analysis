@@ -22,6 +22,7 @@ from src.gui.step3_widget import Step3Widget
 from src.gui.step4_widget import Step4Widget
 from src.gui.step5_widget import Step5Widget
 from src.gui.step6_widget import Step6Widget
+from src.gui.step7_widget import Step7Widget
 from src.gui.summary_widget import SummaryWidget
 from src.gui.gui_utils import NotesPanel, FileHistory
 from src.gui.theme import APP_STYLESHEET, LIGHT_STYLESHEET, FONT_FAMILY_UI, FONT_SIZE_BASE
@@ -72,6 +73,14 @@ class SpectralAnalysisApp(QMainWindow):
             notes_panel=self.notes_panel,
         )
 
+        self.step7_tab = Step7Widget(
+            step1_tab=self.step1_tab,
+            step4_tab=self.step4_tab,
+            step5_tab=self.step5_tab,
+            file_history=self.file_history,
+            notes_panel=self.notes_panel,
+        )
+
         # Create summary dashboard (read-only, fed by step widgets)
         self.summary_tab = SummaryWidget(
             step1=self.step1_tab,
@@ -88,6 +97,7 @@ class SpectralAnalysisApp(QMainWindow):
         self.tabs.addTab(self.step4_tab, "④ Step 4: Elemental Preferences")
         self.tabs.addTab(self.step5_tab, "⑤ Step 5: Validation")
         self.tabs.insertTab(5, self.step6_tab, "⑥ Step 6: Model Performance")
+        self.tabs.insertTab(6, self.step7_tab, "⑦ Step 7: Calibration")
         self.tabs.addTab(self.summary_tab, "📊 Analysis Summary")
 
         central_widget = QWidget()
@@ -173,7 +183,8 @@ class SpectralAnalysisApp(QMainWindow):
             logger.info("Switched to light theme")
         # Propagate to all widgets that have inline styles or matplotlib canvases
         for widget in [self.step1_tab, self.step2_tab, self.step3_tab,
-                       self.step4_tab, self.step5_tab, self.step6_tab, self.summary_tab]:
+                       self.step4_tab, self.step5_tab, self.step6_tab,
+                       self.step7_tab, self.summary_tab]:
             if hasattr(widget, 'apply_theme'):
                 widget.apply_theme()
 
@@ -187,6 +198,7 @@ class SpectralAnalysisApp(QMainWindow):
             "Step 4: Elemental Preferences",
             "Step 5: Validation",
             "Step 6: Model Performance",
+            "Step 7: Calibration",
             "Analysis Summary",
         ]
         if index < len(tab_names):
@@ -196,6 +208,8 @@ class SpectralAnalysisApp(QMainWindow):
         if index == 5:
             self.step6_tab.refresh_if_not_cleared()
         elif index == 6:
+            self.step7_tab.refresh()
+        elif index == 7:
             self.summary_tab.refresh_if_not_cleared()
 
 

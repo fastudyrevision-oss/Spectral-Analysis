@@ -1141,3 +1141,309 @@ class ChartEngine:
                 ha="center", va="center",
                 color=get_chart_text2(), fontsize=10,
                 style="italic", alpha=0.7)
+
+    # ------------------------------------------------------------------
+    # Step 7 charts — Quantitative Calibration
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def render_calibration_curve(
+        ax: Axes,
+        points: list,
+        fit_result,
+        unknown_intensity: float | None,
+        unknown_concentration: float | None,
+        in_range: bool,
+        element_name: str = "",
+    ) -> None:
+        """
+        Calibration curve chart for Step 7.
+
+        Renders:
+        - Scatter of standard calibration points (concentration vs intensity)
+        - Smooth fitted curve across the calibration range
+        - ±1 σ Monte Carlo confidence band (500 samples)
+        - Unknown sample crosshair marker
+        - Extrapolation warning when not in_range
+
+        Requirements: 5.1, 5.3
+        """
+        ax.clear()
+        fig = ax.get_figure()
+        try:
+            has_points = bool(points) and any(
+                p.get("intensity") is not None for p in points
+            )
+            has_fit = (
+                fit_result is not None
+                and fit_result.get("fit_ok", False)
+                and fit_result.get("coefficients")
+            )
+
+            if not has_points and not has_fit:
+                ChartEngine._show_placeholder(ax, "No calibration data")
+                ChartEngine.apply_dark_style(fig, ax)
+                return
+
+            # --- Scatter: calibration standards ----------------------------
+            if has_points:
+                x_pts = np.array(
+                    [p["concentration"] for p in points
+                     if p.get("intensity") is not None],
+                    dtype=float,
+                )
+                y_pts = np.array(
+                    [p["intensity"] for p in points
+                     if p.get("intensity") is not None],
+                    dtype=float,
+                )
+                ax.scatter(
+                    x_pts, y_pts,
+                    color=C_ACCENT, s=60, zorder=5,
+                    label="Standards", edgecolors="white", linewidths=0.5,
+                )
+
+            # --- Fitted curve + confidence band ----------------------------
+            if has_fit:
+                from src.core.step7_calibration import CalibrationEngine
+                lo, hi = fit_result["x_range"]
+                # Extend slightly beyond x_range for display
+                x_lo = max(lo * 0.5, 1e-6)
+                x_hi = hi * 1.2
+                x_smooth = np.linspace(x_lo, x_hi, 200)
+                fn_name = fit_result["model"]
+                fn = CalibrationEngine._MODELS[fn_name][0]
+                coeffs = fit_result["coefficients"]
+                y_smooth = np.array([fn(xi, *coeffs) for xi in x_smooth], dtype=float)
+
+                ax.plot(x_smooth, y_smooth,
+                        color=C_ACCENT2, linewidth=2.0, label="Fitted curve", zorder=4)
+
+                # Monte Carlo confidence band (500 samples)
+                try:
+                    pcov = np.array(fit_result["covariance"], dtype=float)
+                    if pcov.size > 0 and pcov.ndim == 2:
+                        rng = np.random.default_rng(0)
+                        samples = rng.multivariate_normal(coeffs, pcov, size=500)
+                        y_mc = np.array([
+                            [fn(xi, *s) for xi in x_smooth]
+                            for s in samples
+                        ], dtype=float)
+                        y_lo = np.percentile(y_mc, 16, axis=0)
+                        y_hi = np.percentile(y_mc, 84, axis=0)
+                        ax.fill_between(x_smooth, y_lo, y_hi,
+                                        alpha=0.20, color=C_ACCENT2,
+                                        label="±1 σ band")
+                except Exception:
+                    pass  # confidence band is optional
+
+            # --- Unknown sample crosshair ----------------------------------
+            if unknown_intensity is not None and unknown_concentration is not None:
+                ax.axhline(unknown_intensity, color=C_WARN,
+                           linewidth=0.9, linestyle="--", alpha=0.6)
+                ax.axvline(unknown_concentration, color=C_WARN,
+                           linewidth=0.9, linestyle="--", alpha=0.6)
+                ax.scatter(
+                    [unknown_concentration], [unknown_intensity],
+                    color=C_WARN, s=120, marker="*", zorder=6,
+                    label="Unknown sample", edgecolors="white", linewidths=0.5,
+                )
+                if not in_range:
+                    ax.annotate(
+                        "⚠ Extrapolation",
+                        xy=(unknown_concentration, unknown_intensity),
+                        xytext=(10, 10), textcoords="offset points",
+                        color=C_ERROR, fontsize=8, fontweight="bold",
+                        arrowprops=dict(arrowstyle="->", color=C_ERROR, lw=0.8),
+                    )
+
+            title_suffix = f" — {element_name}" if element_name else ""
+            ax.set_xlabel("Concentration (ppm)", color=C_TEXT)
+            ax.set_ylabel("Emission Intensity (a.u.)", color=C_TEXT)
+            ax.set_title(f"Calibration Curve{title_suffix}", color=C_TEXT,
+                         fontsize=10, fontweight="bold")
+            ax.legend(loc="upper left", fontsize=8, framealpha=0.6)
+            _style_legend(ax)
+            _finish(fig, ax)
+
+        except Exception:
+            logger.exception("render_calibration_curve failed")
+            ax.clear()
+            ChartEngine._show_placeholder(ax, "Chart unavailable")
+            ChartEngine.apply_dark_style(fig, ax)
+
+    @staticmethod
+    def render_calibration_residuals(
+        ax: Axes,
+        points: list,
+        fit_result,
+    ) -> None:
+        """
+        Residuals plot for Step 7 calibration.
+
+        Residual = measured_intensity - model(concentration) for each standard.
+
+        Requirements: 5.2
+        """
+        ax.clear()
+        fig = ax.get_figure()
+        try:
+            has_fit = (
+                fit_result is not None
+                and fit_result.get("fit_ok", False)
+                and fit_result.get("coefficients")
+            )
+            has_points = bool(points) and any(
+                p.get("intensity") is not None for p in points
+            )
+
+            if not has_fit or not has_points:
+                msg = ("Fit curve first to see residuals"
+                       if not has_fit else "No calibration data")
+                ChartEngine._show_placeholder(ax, msg)
+                ChartEngine.apply_dark_style(fig, ax)
+                return
+
+            from src.core.step7_calibration import CalibrationEngine
+            fn_name = fit_result["model"]
+            fn = CalibrationEngine._MODELS[fn_name][0]
+            coeffs = fit_result["coefficients"]
+
+            valid = [(p["concentration"], p["intensity"])
+                     for p in points if p.get("intensity") is not None]
+            x_pts = np.array([v[0] for v in valid], dtype=float)
+            y_pts = np.array([v[1] for v in valid], dtype=float)
+            y_pred = np.array([fn(xi, *coeffs) for xi in x_pts], dtype=float)
+            residuals = y_pts - y_pred
+
+            ax.scatter(x_pts, residuals,
+                       color=C_ACCENT, s=55, zorder=5,
+                       edgecolors="white", linewidths=0.4)
+            ax.axhline(0.0, color=C_BORDER, linewidth=1.2,
+                       linestyle="-", zorder=3)
+
+            # Optional error bars for visual clarity at each point
+            ax.vlines(x_pts, 0, residuals,
+                      color=C_ACCENT, linewidth=0.7, alpha=0.5)
+
+            ax.set_xlabel("Concentration (ppm)", color=C_TEXT)
+            ax.set_ylabel("Residual (a.u.)", color=C_TEXT)
+            ax.set_title("Calibration Residuals", color=C_TEXT,
+                         fontsize=10, fontweight="bold")
+            _finish(fig, ax)
+
+        except Exception:
+            logger.exception("render_calibration_residuals failed")
+            ax.clear()
+            ChartEngine._show_placeholder(ax, "Chart unavailable")
+            ChartEngine.apply_dark_style(fig, ax)
+
+    @staticmethod
+    def render_lod_loq_panel(
+        ax: Axes,
+        points: list,
+        fit_result,
+        lod_ppm: float | None,
+        loq_ppm: float | None,
+        blank_noise: float | None,
+    ) -> None:
+        """
+        LOD / LOQ panel for Step 7.
+
+        Re-renders the calibration curve (without the unknown crosshair),
+        then overlays LOD and LOQ indicator lines.
+
+        Requirements: 5.3, 6.3, 6.4
+        """
+        ax.clear()
+        fig = ax.get_figure()
+        try:
+            has_fit = (
+                fit_result is not None
+                and fit_result.get("fit_ok", False)
+                and fit_result.get("coefficients")
+            )
+
+            if not has_fit:
+                ChartEngine._show_placeholder(ax, "Fit curve first to see LOD/LOQ")
+                ChartEngine.apply_dark_style(fig, ax)
+                return
+
+            from src.core.step7_calibration import CalibrationEngine
+            fn_name = fit_result["model"]
+            fn = CalibrationEngine._MODELS[fn_name][0]
+            coeffs = fit_result["coefficients"]
+
+            # --- Calibration curve (same as render_calibration_curve, no unknown) -
+            lo, hi = fit_result["x_range"]
+            x_lo = max(lo * 0.5, 1e-6)
+            x_hi = hi * 1.2
+            x_smooth = np.linspace(x_lo, x_hi, 200)
+            y_smooth = np.array([fn(xi, *coeffs) for xi in x_smooth], dtype=float)
+            ax.plot(x_smooth, y_smooth, color=C_ACCENT2, linewidth=2.0,
+                    label="Fitted curve", zorder=4)
+
+            if bool(points) and any(p.get("intensity") is not None for p in points):
+                x_pts = np.array(
+                    [p["concentration"] for p in points if p.get("intensity") is not None],
+                    dtype=float,
+                )
+                y_pts = np.array(
+                    [p["intensity"] for p in points if p.get("intensity") is not None],
+                    dtype=float,
+                )
+                ax.scatter(x_pts, y_pts, color=C_ACCENT, s=55, zorder=5,
+                           label="Standards", edgecolors="white", linewidths=0.4)
+
+            # --- LOD / LOQ horizontal + vertical lines ---------------------
+            if blank_noise is not None and blank_noise > 0:
+                y_lod = 3.0 * blank_noise
+                y_loq = 10.0 * blank_noise
+                ax.axhline(y_lod, color=C_WARN, linewidth=1.2,
+                           linestyle="--", label=f"LOD intensity (3σ)")
+                ax.axhline(y_loq, color=C_ERROR, linewidth=1.2,
+                           linestyle="--", label=f"LOQ intensity (10σ)")
+
+            if lod_ppm is not None:
+                ax.axvline(lod_ppm, color=C_WARN, linewidth=1.0,
+                           linestyle=":", alpha=0.8)
+                ax.annotate(
+                    f"LOD = {lod_ppm:.3f} ppm",
+                    xy=(lod_ppm, ax.get_ylim()[0]),
+                    xytext=(4, 12), textcoords="offset points",
+                    color=C_WARN, fontsize=8, rotation=90,
+                    va="bottom",
+                )
+
+            if loq_ppm is not None:
+                ax.axvline(loq_ppm, color=C_ERROR, linewidth=1.0,
+                           linestyle=":", alpha=0.8)
+                ax.annotate(
+                    f"LOQ = {loq_ppm:.3f} ppm",
+                    xy=(loq_ppm, ax.get_ylim()[0]),
+                    xytext=(4, 12), textcoords="offset points",
+                    color=C_ERROR, fontsize=8, rotation=90,
+                    va="bottom",
+                )
+
+            if lod_ppm is None and loq_ppm is None:
+                ax.text(
+                    0.98, 0.05, "LOD/LOQ: N/A (no blank provided)",
+                    transform=ax.transAxes,
+                    ha="right", va="bottom",
+                    color=C_TEXT2, fontsize=9, style="italic",
+                )
+
+            ax.set_xlabel("Concentration (ppm)", color=C_TEXT)
+            ax.set_ylabel("Emission Intensity (a.u.)", color=C_TEXT)
+            ax.set_title("Calibration Curve with LOD / LOQ", color=C_TEXT,
+                         fontsize=10, fontweight="bold")
+            ax.legend(loc="upper left", fontsize=8, framealpha=0.6)
+            _style_legend(ax)
+            _finish(fig, ax)
+
+        except Exception:
+            logger.exception("render_lod_loq_panel failed")
+            ax.clear()
+            ChartEngine._show_placeholder(ax, "Chart unavailable")
+            ChartEngine.apply_dark_style(fig, ax)

@@ -274,6 +274,7 @@ def generate_pdf_report(
     step4_results: dict | None = None,
     ranking_fig: Figure | None = None,
     step6_metrics: dict | None = None,
+    step7_results: "dict | None" = None,
 ) -> Path:
     """Generate a comprehensive LIBS Validation Report PDF.
 
@@ -681,6 +682,128 @@ def generate_pdf_report(
                 flowables.append(Spacer(1, 0.4 * cm))
 
         # ------------------------------------------------------------------ #
+        # 9. Optional Step 7 — Quantitative Analysis                          #
+        # ------------------------------------------------------------------ #
+        if step7_results is not None:
+            flowables.append(Paragraph("Step 7 — Quantitative Analysis", style_h2))
+
+            element_name = step7_results.get("element", "")
+            anal_wl = step7_results.get("analytical_wavelength")
+            flowables.append(Paragraph(
+                f"Element: <b>{element_name}</b>  |  "
+                f"Analytical wavelength: {f'{anal_wl:.2f} nm' if anal_wl else 'N/A'}",
+                style_normal,
+            ))
+            flowables.append(Spacer(1, 0.3 * cm))
+
+            fr = step7_results.get("fit_result")
+            if fr and fr.get("fit_ok") and fr.get("coefficients"):
+                # Coefficients table with ±CI
+                import math as _math
+                try:
+                    pcov = fr.get("covariance", [])
+                    coeffs = fr["coefficients"]
+                    ci_strs = []
+                    for i, c in enumerate(coeffs):
+                        try:
+                            var = float(pcov[i][i])
+                            ci = 1.96 * _math.sqrt(max(var, 0.0))
+                            ci_strs.append(f"{c:.4g} ± {ci:.4g}")
+                        except Exception:
+                            ci_strs.append(f"{c:.4g}")
+                    param_labels = {
+                        "linear": ["a (slope)", "b (intercept)"],
+                        "quadratic": ["a (x²)", "b (x)", "c (const)"],
+                        "power_law": ["a (scale)", "b (exponent)"],
+                    }.get(fr["model"], [f"p{i}" for i in range(len(coeffs))])
+                    coeff_header = ["Parameter", "Value (± 95 % CI)"]
+                    coeff_rows = [coeff_header] + [
+                        [param_labels[i] if i < len(param_labels) else f"p{i}", ci_strs[i]]
+                        for i in range(len(coeffs))
+                    ]
+                    coeff_table = Table(coeff_rows, colWidths=[8 * cm, 8 * cm])
+                    coeff_table.setStyle(_base_table_style())
+                    flowables.append(coeff_table)
+                    flowables.append(Spacer(1, 0.4 * cm))
+                except Exception:
+                    pass
+
+            # Metrics row
+            def _fmt7(v):
+                if v is None:
+                    return "N/A"
+                try:
+                    f = float(v)
+                    return "inf" if _math.isinf(f) else f"{f:.4f}"
+                except (TypeError, ValueError):
+                    return "N/A"
+
+            metrics7 = [
+                ["Metric", "Value"],
+                ["Model", fr["model"] if fr else "N/A"],
+                ["R²", _fmt7(fr["r_squared"] if fr else None)],
+                ["RMSE", _fmt7(fr["rmse"] if fr else None)],
+                ["LOD (ppm)", _fmt7(step7_results.get("lod_ppm"))],
+                ["LOQ (ppm)", _fmt7(step7_results.get("loq_ppm"))],
+            ]
+            met_table = Table(metrics7, colWidths=[8 * cm, 8 * cm])
+            met_table.setStyle(_base_table_style())
+            flowables.append(met_table)
+            flowables.append(Spacer(1, 0.4 * cm))
+
+            # Concentration estimate — prominent
+            conc = step7_results.get("unknown_concentration")
+            unc = step7_results.get("unknown_uncertainty")
+            if conc is not None:
+                conc_str = (
+                    f"{_fmt7(conc)} ± {_fmt7(unc)} ppm  (95 % CI)"
+                    if unc is not None else f"{_fmt7(conc)} ppm"
+                )
+                style_conc = ParagraphStyle(
+                    "Conc",
+                    parent=styles["Normal"],
+                    fontSize=14,
+                    fontName="Helvetica-Bold",
+                    textColor=rl_colors.HexColor("#3DDC97"),
+                    spaceAfter=6,
+                )
+                flowables.append(Paragraph(
+                    f"Estimated Concentration:  {conc_str}", style_conc
+                ))
+                if not step7_results.get("in_range", True):
+                    style_warn = ParagraphStyle(
+                        "Warn",
+                        parent=styles["Normal"],
+                        textColor=rl_colors.HexColor("#E85D75"),
+                        fontName="Helvetica-Bold",
+                    )
+                    flowables.append(Paragraph(
+                        "⚠ Extrapolation warning: sample intensity is outside "
+                        "the calibration range. Result may be unreliable.",
+                        style_warn,
+                    ))
+            flowables.append(Spacer(1, 0.4 * cm))
+
+            # Per-standard table
+            pts = step7_results.get("points") or []
+            if pts:
+                flowables.append(Paragraph("Calibration Standards", style_h2))
+                std_header = ["Sample ID", "Concentration (ppm)",
+                              "Intensity (a.u.)", "Is Blank"]
+                std_rows = [std_header]
+                for pt in pts:
+                    std_rows.append([
+                        str(pt.get("sample_id", "")),
+                        _fmt7(pt.get("concentration")),
+                        _fmt7(pt.get("intensity")),
+                        "Yes" if pt.get("is_blank") else "No",
+                    ])
+                std_widths = [4 * cm, 4 * cm, 4 * cm, 4 * cm]
+                std_table = Table(std_rows, colWidths=std_widths)
+                std_table.setStyle(_base_table_style())
+                flowables.append(std_table)
+
+        # ------------------------------------------------------------------ #
         # Build PDF                                                            #
         # ------------------------------------------------------------------ #
         doc.build(flowables)
@@ -830,3 +953,132 @@ def export_step6_png(figures, filepath, dpi=150):
             except Exception:
                 pass
         raise
+
+
+# ---------------------------------------------------------------------------
+# Step 7 CSV / PNG export
+# ---------------------------------------------------------------------------
+
+def export_step7_csv(results, filepath) -> "Path":
+    """Write Step 7 calibration results to a two-section CSV file.
+
+    Section 1 (global results — one-row header block):
+        Element, Model, R2, RMSE, LOD_ppm, LOQ_ppm,
+        Unknown_Concentration_ppm, Uncertainty_ppm, In_Range, Coefficients
+
+    Section 2 (per-standard table):
+        Sample_ID, Concentration_ppm, Intensity, Is_Blank, Residual
+
+    Removes partial file on OSError before re-raising.
+
+    Requirements: 8.1
+    """
+    import csv as _csv
+    import math as _math
+    from pathlib import Path as _Path
+
+    filepath = _Path(filepath)
+
+    def _fmt(v):
+        if v is None:
+            return "N/A"
+        try:
+            f = float(v)
+            return "inf" if _math.isinf(f) else f"{f:.6g}"
+        except (TypeError, ValueError):
+            return str(v)
+
+    try:
+        fr = results.get("fit_result")
+        coeffs_str = (
+            ";".join(f"{c:.6g}" for c in fr["coefficients"])
+            if fr and fr.get("coefficients")
+            else "N/A"
+        )
+
+        with open(str(filepath), "w", newline="", encoding="utf-8") as fh:
+            writer = _csv.writer(fh)
+
+            # Section 1 — global header
+            writer.writerow([
+                "Element", "Model", "R2", "RMSE",
+                "LOD_ppm", "LOQ_ppm",
+                "Unknown_Concentration_ppm", "Uncertainty_ppm",
+                "In_Range", "Coefficients",
+            ])
+            writer.writerow([
+                results.get("element", ""),
+                fr["model"] if fr else "N/A",
+                _fmt(fr["r_squared"] if fr else None),
+                _fmt(fr["rmse"] if fr else None),
+                _fmt(results.get("lod_ppm")),
+                _fmt(results.get("loq_ppm")),
+                _fmt(results.get("unknown_concentration")),
+                _fmt(results.get("unknown_uncertainty")),
+                str(bool(results.get("in_range", False))),
+                coeffs_str,
+            ])
+
+            # Blank separator
+            writer.writerow([])
+
+            # Section 2 — per-standard table
+            writer.writerow([
+                "Sample_ID", "Concentration_ppm", "Intensity",
+                "Is_Blank", "Residual",
+            ])
+            fn = None
+            if fr and fr.get("fit_ok") and fr.get("coefficients"):
+                from src.core.step7_calibration import CalibrationEngine
+                fn_name = fr["model"]
+                fn = CalibrationEngine._MODELS[fn_name][0]
+                coeffs = fr["coefficients"]
+
+            for pt in (results.get("points") or []):
+                intensity = pt.get("intensity")
+                conc = pt.get("concentration")
+                residual = None
+                if fn is not None and intensity is not None and conc is not None:
+                    try:
+                        residual = float(intensity) - float(fn(float(conc), *coeffs))
+                    except Exception:
+                        pass
+                writer.writerow([
+                    pt.get("sample_id", ""),
+                    _fmt(conc),
+                    _fmt(intensity),
+                    str(bool(pt.get("is_blank", False))),
+                    _fmt(residual),
+                ])
+
+        return filepath
+
+    except OSError:
+        try:
+            filepath.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
+
+def export_step7_png(
+    curve_fig: "Figure",
+    residuals_fig: "Figure",
+    lod_fig: "Figure",
+    directory: "Path",
+) -> "list[Path]":
+    """Save the three Step 7 charts as separate PNG files.
+
+    Files written:
+      calibration_curve.png
+      calibration_residuals.png
+      lod_loq_panel.png
+
+    Requirements: 8.2
+    """
+    from pathlib import Path as _Path
+    directory = _Path(directory)
+    curve_path = save_figure_png(curve_fig, directory / "calibration_curve.png")
+    resid_path = save_figure_png(residuals_fig, directory / "calibration_residuals.png")
+    lod_path   = save_figure_png(lod_fig,      directory / "lod_loq_panel.png")
+    return [curve_path, resid_path, lod_path]
