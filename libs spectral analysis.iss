@@ -97,6 +97,12 @@ Source: "{#DistDir}\_internal\NIST database\Ionic lines\*"; \
   DestDir: "{commonappdata}\LIBS_Analysis\NIST database\Ionic lines"; \
   Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
 
+; ── Processed Data (pure-element reference CSVs) → ProgramData ───────────────
+; Same pattern as NIST database: user-writable, never overwritten on reinstall.
+; The app resolves this path at runtime via _get_processed_data_folder().
+Source: "{#DistDir}\_internal\Processed Data\*"; \
+  DestDir: "{commonappdata}\LIBS_Analysis\Processed Data"; \
+  Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
 ; ── [Dirs] ───────────────────────────────────────────────────────────────────
 [Dirs]
 
@@ -112,6 +118,10 @@ Name: "{commonappdata}\LIBS_Analysis\NIST database\Neutral lines"; \
   Permissions: everyone-full
 
 Name: "{commonappdata}\LIBS_Analysis\NIST database\Ionic lines"; \
+  Permissions: everyone-full
+
+; Processed Data folder — writable so users can add/remove pure-element CSVs
+Name: "{commonappdata}\LIBS_Analysis\Processed Data"; \
   Permissions: everyone-full
 
 ; ── [Registry] ───────────────────────────────────────────────────────────────
@@ -133,6 +143,12 @@ Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}\shell\open\command"; \
 Root: HKLM; Subkey: "Software\{#MyAppPublisher}\{#MyAppName}"; \
   ValueType: string; ValueName: "DatabasePath"; \
   ValueData: "{commonappdata}\LIBS_Analysis\NIST database"; \
+  Flags: uninsdeletekey
+
+; Store the Processed Data path in the registry for the same reason.
+Root: HKLM; Subkey: "Software\{#MyAppPublisher}\{#MyAppName}"; \
+  ValueType: string; ValueName: "ProcessedDataPath"; \
+  ValueData: "{commonappdata}\LIBS_Analysis\Processed Data"; \
   Flags: uninsdeletekey
 
 ; ── [Icons] ──────────────────────────────────────────────────────────────────

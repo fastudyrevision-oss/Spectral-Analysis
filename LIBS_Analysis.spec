@@ -14,6 +14,9 @@ dist/LIBS_Analysis/
   NIST database/            <- sits BESIDE the exe, user-editable
     Neutral lines/          <- user can drop new CSV/XLSX files here
     Ionic lines/
+  Processed Data/           <- pure-element reference CSVs for Step 5
+                               moved to ProgramData by the ISS installer
+                               so users can add/remove files freely
   src/                      <- frozen Python bytecode
   _internal/                <- DLLs: scipy, matplotlib, PyQt6
 """
@@ -114,6 +117,10 @@ coll = COLLECT(
     # NIST database copied beside the exe so users can freely add/edit files.
     # Uses Tree() so all CSV/XLSX files and subdirectories are included.
     Tree('NIST database', prefix='NIST database'),
+    # Processed Data (pure-element reference CSVs for Step 5 validation).
+    # Installed to ProgramData by the ISS installer; Tree() copies it into
+    # _internal so the portable build and first-run installs also work.
+    Tree('Processed Data', prefix='Processed Data'),
     strip=False,
     upx=False,
     name='LIBS_Analysis',

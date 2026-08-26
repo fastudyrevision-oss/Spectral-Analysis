@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QDoubleSpinBox,
     QFileDialog, QSpinBox, QSplitter, QProgressBar, QScrollArea, QTabWidget,
-    QCheckBox, QFrame,
+    QCheckBox, QFrame, QListWidget, QListWidgetItem, QAbstractItemView,
 )
 from PyQt6.QtGui import QFont, QColor
 
@@ -72,10 +72,19 @@ class Step5Widget(QWidget):
         self._processed_history = FileHistory(role="step5_processed")
         self._reference_history = FileHistory(role="step5_reference")
         self._wavelengths_history = FileHistory(role="step5_wavelengths")
+        self._custom_ref_history = FileHistory(role="step5_custom_ref")
 
         # Stored file paths (replaces FileSelector)
         self._processed_path: Path | None = None
         self._reference_path: Path | None = None
+
+        # Multi-file reference lists
+        self._ref_paths: list[str] = []        # paths from Processed Data folder checklist
+        # Restore persisted custom reference files from history (survives restarts)
+        self._custom_ref_paths: list[str] = [
+            p for p in self._custom_ref_history.get_recent()
+            if Path(p).exists()
+        ]
 
         logger.info("Initializing Step 5 widget")
 
@@ -85,6 +94,9 @@ class Step5Widget(QWidget):
 
         main_layout.addWidget(self._create_left_panel(), stretch=0)
         main_layout.addWidget(self._create_right_panel(), stretch=1)
+
+        # Restore persisted custom reference files into the list widget
+        self._restore_custom_ref_list()
 
     # ──────────────────────────────────────────────────────────────────────
     # Panel builders
@@ -168,36 +180,53 @@ class Step5Widget(QWidget):
         divider.setStyleSheet("color: #3A4055;")
         fl.addWidget(divider)
 
-        # ── Reference Spectrum ────────────────────────────────────────────
-        ref_lbl = QLabel("Reference Spectrum (pure-element CSV):")
-        ref_lbl.setStyleSheet("font-size: 9pt; font-weight: 600;")
-        fl.addWidget(ref_lbl)
-
-        ref_path_row = QHBoxLayout()
-        ref_path_row.setSpacing(4)
-        self._ref_path_label = QLabel("(No file selected)")
-        self._ref_path_label.setStyleSheet(
-            f"font-size: 9pt; font-style: italic; color: {C_TEXT_MUTED}; "
-            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
-        self._ref_path_label.setWordWrap(False)
-        ref_path_row.addWidget(self._ref_path_label, stretch=1)
-        ref_browse_btn = QPushButton("Browse…")
-        ref_browse_btn.setFixedWidth(70)
-        ref_browse_btn.setFixedHeight(26)
-        ref_browse_btn.clicked.connect(self._on_browse_reference)
-        ref_path_row.addWidget(ref_browse_btn)
-        fl.addLayout(ref_path_row)
-
-        ref_recent_row = QHBoxLayout()
-        ref_recent_row.setSpacing(4)
-        self._ref_recent_btn = RecentFilesButton(self._reference_history)
-        self._ref_recent_btn.file_selected.connect(self._on_recent_reference)
-        ref_recent_row.addWidget(self._ref_recent_btn)
-        ref_recent_row.addStretch()
-        fl.addLayout(ref_recent_row)
-
         files_group.setLayout(fl)
         layout.addWidget(files_group)
+
+        # ── Pure Element Reference Files (Processed Data folder) ──────────
+        layout.addWidget(self._create_processed_data_group())
+
+        # ── Custom Reference Files ────────────────────────────────────────
+        layout.addWidget(self._create_custom_ref_group())
+
+        # ── Selected Reference Files summary ──────────────────────────────
+        self._ref_sel_group = QGroupBox("Selected Reference Files")
+        rsg = QVBoxLayout(self._ref_sel_group)
+        rsg.setContentsMargins(6, 6, 6, 6)
+        rsg.setSpacing(4)
+
+        rsg_header = QHBoxLayout()
+        self._ref_sel_count_label = QLabel("No reference files selected")
+        self._ref_sel_count_label.setStyleSheet("font-size: 10px; font-weight: bold;")
+        rsg_header.addWidget(self._ref_sel_count_label)
+        rsg_header.addStretch()
+        self._ref_sel_toggle_btn = QPushButton("▶ Show")
+        self._ref_sel_toggle_btn.setFixedHeight(20)
+        self._ref_sel_toggle_btn.setFixedWidth(60)
+        self._ref_sel_toggle_btn.setStyleSheet(
+            "QPushButton { font-size: 9px; padding: 0 4px; }")
+        self._ref_sel_toggle_btn.clicked.connect(self._on_toggle_ref_sel_list)
+        rsg_header.addWidget(self._ref_sel_toggle_btn)
+        rsg.addLayout(rsg_header)
+
+        self._ref_sel_list_frame = QFrame()
+        self._ref_sel_list_frame.setVisible(False)
+        rsl_layout = QVBoxLayout(self._ref_sel_list_frame)
+        rsl_layout.setContentsMargins(0, 2, 0, 0)
+        rsl_layout.setSpacing(2)
+        self._ref_sel_list_widget = QListWidget()
+        self._ref_sel_list_widget.setMaximumHeight(120)
+        self._ref_sel_list_widget.setMinimumHeight(60)
+        self._ref_sel_list_widget.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection)
+        self._ref_sel_list_widget.setStyleSheet("font-size: 9pt;")
+        rsl_layout.addWidget(self._ref_sel_list_widget)
+        rsg.addWidget(self._ref_sel_list_frame)
+        layout.addWidget(self._ref_sel_group)
+
+        # Now all summary widgets exist — sync the initial state
+        # (picks up any files that were already checked in the folder list)
+        self._update_ref_sel_summary()
 
         params_group = QGroupBox("Parameters")
         pl = QHBoxLayout()
@@ -317,6 +346,129 @@ class Step5Widget(QWidget):
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setMaximumWidth(370)
         return scroll
+
+    def _create_processed_data_group(self) -> QGroupBox:
+        """
+        'Processed Data' folder group — mirrors Step 3's Built-in Database group.
+        Scans the bundled 'Processed Data' folder for pure-element CSV files and
+        presents them as a checkable list so the user can pick which elements to
+        validate against.
+        """
+        group = QGroupBox("Pure Element Reference Files (Processed Data)")
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(6, 8, 6, 6)
+        layout.setSpacing(6)
+
+        # ── Status / installer caution banner ─────────────────────────────
+        self._ref_db_status_label = QLabel("⏳ Scanning Processed Data folder…")
+        self._ref_db_status_label.setStyleSheet(
+            "font-size: 10px; color: #888; padding: 2px;")
+        self._ref_db_status_label.setWordWrap(True)
+        layout.addWidget(self._ref_db_status_label)
+
+        # Installer caution — same pattern as Step 3's database folder note
+        caution_lbl = QLabel(
+            "ℹ️  Drop new pure-element CSVs into the 'Processed Data' folder "
+            "and click Refresh — they will appear automatically.")
+        caution_lbl.setWordWrap(True)
+        caution_lbl.setStyleSheet(
+            "font-size: 9px; color: #AEB7C4; padding: 2px;")
+        layout.addWidget(caution_lbl)
+
+        # ── Open folder + Refresh row ─────────────────────────────────────
+        folder_row = QHBoxLayout()
+        folder_row.setSpacing(4)
+        self._open_ref_folder_btn = QPushButton("📂 Open Folder")
+        self._open_ref_folder_btn.setToolTip(
+            "Open the 'Processed Data' folder in File Explorer.\n"
+            "Add pure-element CSV files here and click Refresh.")
+        self._open_ref_folder_btn.setFixedHeight(24)
+        self._open_ref_folder_btn.clicked.connect(self._on_open_ref_folder)
+        folder_row.addWidget(self._open_ref_folder_btn)
+
+        self._refresh_ref_btn = QPushButton("🔄 Refresh")
+        self._refresh_ref_btn.setToolTip(
+            "Rescan the Processed Data folder and rebuild the file list.\n"
+            "Use after adding or removing pure-element files.")
+        self._refresh_ref_btn.setFixedHeight(24)
+        self._refresh_ref_btn.setFixedWidth(70)
+        self._refresh_ref_btn.clicked.connect(self._on_refresh_ref_folder)
+        folder_row.addWidget(self._refresh_ref_btn)
+        layout.addLayout(folder_row)
+
+        # ── File checklist ────────────────────────────────────────────────
+        self._ref_file_list = QListWidget()
+        self._ref_file_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection)
+        self._ref_file_list.setMinimumHeight(80)
+        self._ref_file_list.setMaximumHeight(160)
+        self._ref_file_list.setToolTip(
+            "Check the pure-element files you want to validate against.\n"
+            "All checked files will be merged before validation.")
+        layout.addWidget(self._ref_file_list)
+
+        # Select all / None row
+        sel_row = QHBoxLayout()
+        sel_row.setSpacing(4)
+        sel_all_btn = QPushButton("All")
+        sel_all_btn.setFixedHeight(22)
+        sel_all_btn.clicked.connect(self._on_ref_select_all)
+        sel_row.addWidget(sel_all_btn)
+        sel_none_btn = QPushButton("None")
+        sel_none_btn.setFixedHeight(22)
+        sel_none_btn.clicked.connect(self._on_ref_select_none)
+        sel_row.addWidget(sel_none_btn)
+        self._ref_checked_count_lbl = QLabel("0 selected")
+        self._ref_checked_count_lbl.setStyleSheet("font-size: 10px; color: grey;")
+        sel_row.addWidget(self._ref_checked_count_lbl)
+        sel_row.addStretch()
+        layout.addLayout(sel_row)
+
+        # Populate immediately
+        self._populate_ref_file_list()
+
+        return group
+
+    def _create_custom_ref_group(self) -> QGroupBox:
+        """Collapsible group for custom (manually uploaded) reference files."""
+        group = QGroupBox("Custom Reference Files  (optional)")
+        group.setCheckable(True)
+        group.setChecked(False)
+        group.setToolTip(
+            "Upload your own pure-element CSV files to supplement or replace "
+            "the files in the Processed Data folder."
+        )
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self._custom_ref_list_widget = QListWidget()
+        self._custom_ref_list_widget.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._custom_ref_list_widget.setMaximumHeight(70)
+        layout.addWidget(self._custom_ref_list_widget)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("Add File(s)…")
+        add_btn.clicked.connect(self._on_add_custom_ref_files)
+        btn_row.addWidget(add_btn)
+        rem_btn = QPushButton("Remove")
+        rem_btn.clicked.connect(self._on_remove_custom_ref_files)
+        btn_row.addWidget(rem_btn)
+        clr_btn = QPushButton("Clear")
+        clr_btn.clicked.connect(self._on_clear_custom_ref_files)
+        btn_row.addWidget(clr_btn)
+        layout.addLayout(btn_row)
+
+        recent_row = QHBoxLayout()
+        self._custom_ref_recent_btn = RecentFilesButton(self._custom_ref_history)
+        self._custom_ref_recent_btn.file_selected.connect(
+            self._on_recent_custom_ref_selected)
+        recent_row.addWidget(self._custom_ref_recent_btn)
+        recent_row.addStretch()
+        layout.addLayout(recent_row)
+
+        return group
 
     def _create_right_panel(self) -> QWidget:
         """Right panel: tab widget (histogram | overlay | results table)."""
@@ -447,6 +599,225 @@ class Step5Widget(QWidget):
         self.summary_banner.setStyleSheet(summary_banner_style())
 
     # ──────────────────────────────────────────────────────────────────────
+    # Processed Data folder helpers
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _get_processed_data_folder(self) -> Path:
+        """
+        Resolve the 'Processed Data' folder in all three environments:
+
+          A) Development  — repo root / Processed Data
+          B) Installed    — registry key → ProgramData\\LIBS_Analysis\\Processed Data
+                            (written there by the Inno Setup installer)
+          C) Portable     — beside the .exe  or  _internal/ beside the .exe
+        """
+        import sys, os
+
+        if getattr(sys, "frozen", False):
+            # ── 1. Registry (installer sets this) ─────────────────────────
+            try:
+                import winreg
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"Software\JFD Tech\LIBS Spectral Analysis",
+                )
+                path_str, _ = winreg.QueryValueEx(key, "ProcessedDataPath")
+                winreg.CloseKey(key)
+                reg_path = Path(path_str)
+                if reg_path.exists():
+                    return reg_path
+            except Exception:
+                pass  # registry key absent (portable build or first run)
+
+            # ── 2. ProgramData (standard installer layout) ─────────────────
+            prog_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+            installed = prog_data / "LIBS_Analysis" / "Processed Data"
+            if installed.exists():
+                return installed
+
+            # ── 3. _internal subfolder (PyInstaller 6.x one-folder layout) ─
+            exe_dir = Path(sys.executable).parent
+            internal = exe_dir / "_internal" / "Processed Data"
+            if internal.exists():
+                return internal
+
+            # ── 4. Beside the exe (portable / PyInstaller <6) ──────────────
+            beside = exe_dir / "Processed Data"
+            if beside.exists():
+                return beside
+
+            # Final fallback — return best-guess so the UI shows the warning
+            return installed
+
+        # Development: src/gui/step5_widget.py → src/gui → src → project root
+        return Path(__file__).resolve().parent.parent.parent / "Processed Data"
+
+    def _populate_ref_file_list(self):
+        """Scan Processed Data folder and populate the checklist."""
+        folder = self._get_processed_data_folder()
+        self._ref_file_list.clear()
+
+        if not folder.exists():
+            self._ref_db_status_label.setText(
+                f"⚠ Folder not found: {folder}\n"
+                "Place pure-element CSV files in 'Processed Data' next to the project.")
+            self._ref_db_status_label.setStyleSheet(
+                "font-size: 10px; color: #F44336; padding: 2px;")
+            return
+
+        csv_files = sorted(folder.glob("*.csv"))
+        if not csv_files:
+            self._ref_db_status_label.setText(
+                "⚠ No CSV files found in Processed Data folder.")
+            self._ref_db_status_label.setStyleSheet(
+                "font-size: 10px; color: #F4B942; padding: 2px;")
+            return
+
+        for fp in csv_files:
+            item = QListWidgetItem(fp.stem)
+            item.setData(Qt.ItemDataRole.UserRole, str(fp))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            item.setToolTip(str(fp))
+            self._ref_file_list.addItem(item)
+
+        self._ref_db_status_label.setText(
+            f"✅ {len(csv_files)} pure-element file(s) found in Processed Data")
+        self._ref_db_status_label.setStyleSheet(
+            "font-size: 10px; color: #4CAF50; padding: 2px;")
+        self._ref_file_list.itemChanged.connect(self._on_ref_checklist_changed)
+        # Don't call _update_ref_sel_summary here — the summary widgets
+        # (_ref_sel_count_label etc.) are built later in _create_left_panel.
+
+    def _on_ref_checklist_changed(self):
+        self._update_ref_sel_summary()
+
+    def _on_ref_select_all(self):
+        for i in range(self._ref_file_list.count()):
+            self._ref_file_list.item(i).setCheckState(Qt.CheckState.Checked)
+
+    def _on_ref_select_none(self):
+        for i in range(self._ref_file_list.count()):
+            self._ref_file_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+
+    def _on_open_ref_folder(self):
+        """Open the Processed Data folder in the system file explorer."""
+        import subprocess
+        folder = self._get_processed_data_folder()
+        if not folder.exists():
+            show_error(
+                "Folder Not Found",
+                f"Processed Data folder does not exist:\n{folder}")
+            return
+        try:
+            subprocess.Popen(f'explorer "{folder}"')
+        except Exception as exc:
+            logger.warning(f"Could not open folder: {exc}")
+            show_info("Processed Data Folder", str(folder))
+
+    def _on_refresh_ref_folder(self):
+        """Rescan the Processed Data folder and rebuild the checklist."""
+        self._ref_file_list.itemChanged.disconnect() if self._ref_file_list.count() else None
+        self._populate_ref_file_list()
+
+    def _get_checked_ref_paths(self) -> list[str]:
+        """Return paths of all checked items in the Processed Data checklist."""
+        paths = []
+        for i in range(self._ref_file_list.count()):
+            item = self._ref_file_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                paths.append(item.data(Qt.ItemDataRole.UserRole))
+        return paths
+
+    def _update_ref_sel_summary(self):
+        """Refresh the Selected Reference Files summary panel and count label."""
+        # Guard: summary widgets are built after the processed data group,
+        # so this can be called before they exist during construction.
+        if not hasattr(self, "_ref_sel_count_label"):
+            return
+
+        folder_paths = self._get_checked_ref_paths()
+        custom_paths = list(self._custom_ref_paths)
+        all_paths = folder_paths + custom_paths
+
+        n = len(all_paths)
+        n_checked = len(folder_paths)
+        self._ref_checked_count_lbl.setText(f"{n_checked} selected")
+        self._ref_checked_count_lbl.setStyleSheet(
+            f"font-size: 10px; color: {'#4CAF50' if n_checked else 'grey'};")
+
+        if n == 0:
+            self._ref_sel_count_label.setText("No reference files selected")
+            self._ref_sel_count_label.setStyleSheet(
+                "font-size: 10px; font-weight: bold; color: grey;")
+        else:
+            self._ref_sel_count_label.setText(
+                f"{n} reference file{'s' if n != 1 else ''} selected")
+            self._ref_sel_count_label.setStyleSheet(
+                "font-size: 10px; font-weight: bold; color: #4CAF50;")
+
+        self._ref_sel_list_widget.clear()
+        for fp in all_paths:
+            item = QListWidgetItem(Path(fp).name)
+            item.setToolTip(fp)
+            item.setForeground(QColor("#3FA9F5"))
+            self._ref_sel_list_widget.addItem(item)
+
+    def _on_toggle_ref_sel_list(self):
+        visible = not self._ref_sel_list_frame.isVisible()
+        self._ref_sel_list_frame.setVisible(visible)
+        self._ref_sel_toggle_btn.setText("▼ Hide" if visible else "▶ Show")
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Custom reference file helpers
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _on_add_custom_ref_files(self):
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Add Custom Reference Files", "",
+            "CSV Files (*.csv);;All Files (*)")
+        for fp in files:
+            if fp not in self._custom_ref_paths:
+                self._custom_ref_paths.append(fp)
+                self._custom_ref_list_widget.addItem(
+                    QListWidgetItem(Path(fp).name))
+                self._custom_ref_history.add_file(fp)
+        if files:
+            self._custom_ref_recent_btn.refresh()
+            self._update_ref_sel_summary()
+
+    def _on_remove_custom_ref_files(self):
+        for item in self._custom_ref_list_widget.selectedItems():
+            row = self._custom_ref_list_widget.row(item)
+            self._custom_ref_list_widget.takeItem(row)
+            if row < len(self._custom_ref_paths):
+                self._custom_ref_paths.pop(row)
+        self._update_ref_sel_summary()
+
+    def _on_clear_custom_ref_files(self):
+        self._custom_ref_list_widget.clear()
+        self._custom_ref_paths.clear()
+        self._update_ref_sel_summary()
+
+    def _on_recent_custom_ref_selected(self, path_str: str):
+        if path_str not in self._custom_ref_paths:
+            self._custom_ref_paths.append(path_str)
+            self._custom_ref_list_widget.addItem(
+                QListWidgetItem(Path(path_str).name))
+            self._update_ref_sel_summary()
+
+    def _restore_custom_ref_list(self):
+        """
+        Re-populate the custom reference QListWidget from the persisted list.
+        Called once after the UI is fully built so widgets exist.
+        Paths that no longer exist on disk are silently skipped.
+        """
+        for fp in self._custom_ref_paths:
+            self._custom_ref_list_widget.addItem(QListWidgetItem(Path(fp).name))
+        if self._custom_ref_paths:
+            self._update_ref_sel_summary()
+
+    # ──────────────────────────────────────────────────────────────────────
     # File selection helpers
     # ──────────────────────────────────────────────────────────────────────
 
@@ -474,29 +845,6 @@ class Step5Widget(QWidget):
         except AttributeError:
             pass   # widget not yet fully constructed — path is stored, UI will catch up
         logger.info(f"Processed spectrum: {path.name}")
-
-    def _on_browse_reference(self):
-        fp, _ = QFileDialog.getOpenFileName(
-            self, "Select Reference Spectrum", "", "CSV Files (*.csv)")
-        if fp:
-            self._set_reference_path(Path(fp))
-
-    def _on_recent_reference(self, path_str: str):
-        self._set_reference_path(Path(path_str))
-
-    def _set_reference_path(self, path: Path):
-        self._reference_path = path
-        self._reference_history.add_file(str(path))
-        try:
-            self._ref_path_label.setText(path.name)
-            self._ref_path_label.setStyleSheet(
-                f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
-                f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
-            self._ref_path_label.setToolTip(str(path))
-            self._ref_recent_btn.refresh()
-        except AttributeError:
-            pass
-        logger.info(f"Reference spectrum: {path.name}")
 
     # ──────────────────────────────────────────────────────────────────────
     # Wavelength loading
@@ -568,20 +916,27 @@ class Step5Widget(QWidget):
 
     def _on_validate_clicked(self):
         if self._processed_path is None:
-            show_error("Error", "Please select processed spectrum file")
+            show_error("Error", "Please select a processed spectrum file")
             return
-        if self._reference_path is None:
-            show_error("Error", "Please select reference spectrum file")
+
+        # Collect all selected reference paths (folder checklist + custom)
+        ref_paths = self._get_checked_ref_paths() + list(self._custom_ref_paths)
+        if not ref_paths:
+            show_error("Error",
+                       "Please select at least one pure-element reference file.\n"
+                       "Check files in 'Pure Element Reference Files' or add "
+                       "custom files.")
             return
         if not self.target_wavelengths:
             show_error("Error", "Please specify target wavelengths")
             return
 
-        # Ensure paths are persisted to history (backfill if browse didn't save)
+        # Stash for the worker
+        self._active_ref_paths = ref_paths
+
+        # Ensure processed path is persisted to history
         self._processed_history.add_file(str(self._processed_path))
-        self._reference_history.add_file(str(self._reference_path))
         self._proc_recent_btn.refresh()
-        self._ref_recent_btn.refresh()
 
         self.info_label.setText("Validating spectrum…")
         self.validate_button.setEnabled(False)
@@ -599,7 +954,17 @@ class Step5Widget(QWidget):
     def _validate_worker(self):
         try:
             processed = pd.read_csv(str(self._processed_path))
-            reference = pd.read_csv(str(self._reference_path))
+            # Merge all selected reference files into one DataFrame
+            ref_frames = []
+            for rp in getattr(self, "_active_ref_paths", []):
+                try:
+                    ref_frames.append(pd.read_csv(rp))
+                except Exception as e:
+                    logger.warning(f"Could not read reference file {rp}: {e}")
+            if not ref_frames:
+                raise ValueError("No reference files could be loaded.")
+            # Concatenate then deduplicate on wavelength column (keep first)
+            reference = pd.concat(ref_frames, ignore_index=True)
             params = {
                 'WINDOW': self.window_spinbox.value(),
                 'MIN_POINTS': self.min_points_spinbox.value(),
@@ -898,15 +1263,17 @@ class Step5Widget(QWidget):
             'MIN_POINTS': self.min_points_spinbox.value(),
             'VC_THRESHOLD': self.threshold_spinbox.value(),
         }
-        processed_path = self.processed_selector.get_filepath()
-        reference_path = self.reference_selector.get_filepath()
+        processed_path = str(self._processed_path) if self._processed_path else None
+        reference_paths = getattr(self, "_active_ref_paths", [])
+        reference_names = ", ".join(
+            Path(p).name for p in reference_paths) if reference_paths else "Unknown"
         try:
             generate_pdf_report(
                 validation_results_df=self.validation_results,
                 params=params,
                 vc_fig=self.vc_fig,
                 processed_filename=Path(processed_path).name if processed_path else "Unknown",
-                reference_filename=Path(reference_path).name if reference_path else "Unknown",
+                reference_filename=reference_names,
                 target_wavelengths=self.target_wavelengths,
                 filepath=Path(filepath),
             )
