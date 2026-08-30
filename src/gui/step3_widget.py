@@ -212,6 +212,10 @@ class Step3Widget(QWidget):
       - Tabs: Element Frequency chart | Match Score Scatter | Results Table
     """
 
+    # Emitted after successful matching — carries list[NISTMatch]
+    # so Step 4 can receive results directly without a file round-trip.
+    result_ready = pyqtSignal(object)
+
     def __init__(self, file_history=None, notes_panel=None):
         super().__init__()
         self.detected_peaks   = None
@@ -438,6 +442,7 @@ class Step3Widget(QWidget):
 
         # ── Loading status banner ─────────────────────────────────────────
         self._db_status_label = QLabel("⏳ Loading database…")
+        self._db_status_label.setWordWrap(True)
         self._db_status_label.setStyleSheet(
             "font-size: 10px; color: #888; padding: 2px;")
         layout.addWidget(self._db_status_label)
@@ -456,13 +461,12 @@ class Step3Widget(QWidget):
         self._open_folder_btn.clicked.connect(self._on_open_db_folder)
         folder_row.addWidget(self._open_folder_btn)
 
-        self._refresh_btn = QPushButton("🔄 Refresh")
+        self._refresh_btn = QPushButton("🔄 Refresh DB")
         self._refresh_btn.setToolTip(
             "Rescan the database folder and rebuild the cache.\n"
             "Use after adding or removing element files."
         )
         self._refresh_btn.setFixedHeight(24)
-        self._refresh_btn.setFixedWidth(70)
         self._refresh_btn.clicked.connect(self._on_refresh_db)
         folder_row.addWidget(self._refresh_btn)
 
@@ -484,7 +488,6 @@ class Step3Widget(QWidget):
         self._ionic_btn.setChecked(False)
         self._ionic_btn.setToolTip("Load singly-ionised lines from the built-in database")
         self._ionic_btn.toggled.connect(self._on_ionic_toggled)
-        toggle_row.addWidget(self._ionic_btn)
         toggle_row.addWidget(self._ionic_btn)
 
         layout.addLayout(toggle_row)
@@ -642,8 +645,9 @@ class Step3Widget(QWidget):
         self._ionic_list.populate(loader.list_elements("ionic"))
 
         self._db_status_label.setText(
-            f"✅ Ready — {n_elem} neutral / {i_elem} ionic elements  "
-            f"({n_rows + i_rows:,} lines)"
+            f"✅ Ready — {n_elem} neutral elements ({n_rows:,} lines)\n"
+            f"   {i_elem} ionic elements ({i_rows:,} lines)\n"
+            f"Toggle buttons above to activate."
         )
         self._db_status_label.setStyleSheet(
             "font-size: 10px; color: #4CAF50; padding: 2px;")
@@ -742,26 +746,37 @@ class Step3Widget(QWidget):
         """Refresh the status label to reflect current selection counts."""
         if self._nist_loader is None:
             return
-        n_sel = len(self._neutral_list.selected_elements()) if self._neutral_btn.isChecked() else 0
-        i_sel = len(self._ionic_list.selected_elements())   if self._ionic_btn.isChecked()   else 0
-        parts = []
-        if self._neutral_btn.isChecked():
-            parts.append(f"{n_sel} neutral")
-        if self._ionic_btn.isChecked():
-            parts.append(f"{i_sel} ionic")
-        if parts:
-            self._db_status_label.setText(f"✅ Selected: {', '.join(parts)} elements")
-            self._db_status_label.setStyleSheet(
-                "font-size: 10px; color: #4CAF50; padding: 2px;")
-        else:
-            n_total = self._nist_loader.element_count("neutral")
-            i_total = self._nist_loader.element_count("ionic")
+        n_total = self._nist_loader.element_count("neutral")
+        i_total = self._nist_loader.element_count("ionic")
+        n_rows  = self._nist_loader.row_count("neutral")
+        i_rows  = self._nist_loader.row_count("ionic")
+
+        neutral_on = self._neutral_btn.isChecked()
+        ionic_on   = self._ionic_btn.isChecked()
+
+        if not neutral_on and not ionic_on:
             self._db_status_label.setText(
-                f"ℹ Toggle Neutral / Ionic to enable built-in database  "
-                f"({n_total} + {i_total} elements available)"
+                f"ℹ Toggle Neutral / Ionic to activate.\n"
+                f"Available: {n_total} neutral elements ({n_rows:,} lines), "
+                f"{i_total} ionic elements ({i_rows:,} lines)"
             )
             self._db_status_label.setStyleSheet(
                 "font-size: 10px; color: #888; padding: 2px;")
+            return
+
+        parts = []
+        if neutral_on:
+            n_sel = len(self._neutral_list.selected_elements())
+            label = f"{n_sel}/{n_total} neutral" if n_sel else f"all {n_total} neutral"
+            parts.append(f"{label} ({n_rows:,} lines)")
+        if ionic_on:
+            i_sel = len(self._ionic_list.selected_elements())
+            label = f"{i_sel}/{i_total} ionic" if i_sel else f"all {i_total} ionic"
+            parts.append(f"{label} ({i_rows:,} lines)")
+
+        self._db_status_label.setText("✅ Active: " + "\n         ".join(parts))
+        self._db_status_label.setStyleSheet(
+            "font-size: 10px; color: #4CAF50; padding: 2px;")
 
     def _update_selected_elements(self):
         """Refresh the Selected Elements summary panel."""
@@ -811,8 +826,10 @@ class Step3Widget(QWidget):
     # ── Peaks file management ─────────────────────────────────────────────────
 
     def _on_add_peaks_files(self):
+        recent = self._peaks_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Select Detected Peaks File(s)", str(Path.home()),
+            self, "Select Detected Peaks File(s)", start_dir,
             "CSV Files (*.csv)"
         )
         for fp in files:
@@ -860,8 +877,10 @@ class Step3Widget(QWidget):
     # ── Custom file management ────────────────────────────────────────────────
 
     def _on_add_custom_files(self):
+        recent = self._custom_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Select NIST Database File(s)", str(Path.home()),
+            self, "Select NIST Database File(s)", start_dir,
             "Database Files (*.csv *.xlsx *.csv.xlsx)"
         )
         for fp in files:
@@ -995,7 +1014,8 @@ class Step3Widget(QWidget):
         return frames
 
     def _on_match_clicked(self):
-        if not self._peaks_paths:
+        # Allow proceeding if peaks were loaded in-memory from Step 2
+        if not self._peaks_paths and not self.detected_peaks:
             show_error("Error", "Please add at least one detected peaks file.")
             return
 
@@ -1016,21 +1036,23 @@ class Step3Widget(QWidget):
         self.match_button.setEnabled(False)
 
         # Load and merge detected peaks from all selected files
-        try:
-            reader = CSVReader()
-            all_peaks = []
-            for fp in self._peaks_paths:
-                peaks = reader.read_detected_peaks(fp)
-                all_peaks.extend(peaks)
-                logger.info(f"Loaded {len(peaks)} peaks from '{Path(fp).name}'")
-            self.detected_peaks = all_peaks
-            logger.info(f"Total detected peaks: {len(self.detected_peaks)}")
-        except Exception as exc:
-            logger.error(f"Failed to load peaks: {exc}")
-            show_error("Error", f"Failed to load peaks file:\n{exc}")
-            self.match_button.setEnabled(True)
-            self.info_label.setText("Error loading peaks file.")
-            return
+        # (skipped when peaks were already loaded in-memory from Step 2)
+        if self._peaks_paths:
+            try:
+                reader = CSVReader()
+                all_peaks = []
+                for fp in self._peaks_paths:
+                    peaks = reader.read_detected_peaks(fp)
+                    all_peaks.extend(peaks)
+                    logger.info(f"Loaded {len(peaks)} peaks from '{Path(fp).name}'")
+                self.detected_peaks = all_peaks
+                logger.info(f"Total detected peaks: {len(self.detected_peaks)}")
+            except Exception as exc:
+                logger.error(f"Failed to load peaks: {exc}")
+                show_error("Error", f"Failed to load peaks file:\n{exc}")
+                self.match_button.setEnabled(True)
+                self.info_label.setText("Error loading peaks file.")
+                return
 
         # Collect NIST DataFrames
         nist_dfs = self._collect_nist_dataframes()
@@ -1076,9 +1098,40 @@ class Step3Widget(QWidget):
                 f"Done: {len(identified)} of {len(self.matches)} peaks identified."
             )
             self.save_button.setEnabled(True)
+
+            # Notify next step — pass data directly (no file round-trip)
+            self.result_ready.emit(self.matches)
         else:
             self.info_label.setText("No matches found.")
         self.match_button.setEnabled(True)
+
+    def load_from_step2(self, detected_peaks) -> None:
+        """
+        Auto-load Step 2 output directly into Step 3 (no file picker needed).
+
+        detected_peaks — list[DetectedPeak] from Step 2.
+        The peaks list widget is updated to show the in-memory source label.
+        """
+        if not detected_peaks:
+            return
+        # Store the peaks internally
+        self.detected_peaks = detected_peaks
+        n = len(detected_peaks)
+
+        # Reflect in the UI: replace any existing file entries with an
+        # in-memory sentinel so the user sees what happened.
+        self._peaks_paths = []   # clear file-based paths — using in-memory data
+        self._peaks_list_widget.clear()
+        from PyQt6.QtWidgets import QListWidgetItem as _LWI
+        sentinel = _LWI(f"← {n} peaks loaded from Step 2 (in-memory)")
+        self._peaks_list_widget.addItem(sentinel)
+        self._peaks_count_label.setText(f"✅ {n} peaks from Step 2")
+        self._peaks_count_label.setStyleSheet("font-size: 10px; color: #4CAF50;")
+        self.info_label.setText(
+            f"✅ {n:,} peaks loaded from Step 2.\n"
+            "Select NIST elements and click 'Match Peaks'."
+        )
+        logger.info("Step 3: in-memory peaks loaded from Step 2 (%d peaks)", n)
 
     def _on_matching_error(self, error: str):
         logger.error(f"Matching error: {error}")
@@ -1134,8 +1187,10 @@ class Step3Widget(QWidget):
             show_error("Error", "No matches to save.")
             return
 
+        recent = self._peaks_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         save_dir = QFileDialog.getExistingDirectory(
-            self, "Select Save Directory", str(Path.home()))
+            self, "Select Save Directory", start_dir)
         if not save_dir:
             return
 

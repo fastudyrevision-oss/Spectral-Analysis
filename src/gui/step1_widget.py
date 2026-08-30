@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea, QSplitter, QTabWidget,
-    QSizePolicy
+    QSizePolicy, QFileDialog
 )
 from PyQt6.QtGui import QFont
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -62,6 +62,9 @@ class Step1Widget(QWidget):
     # Signals
     processing_started = pyqtSignal()
     processing_finished = pyqtSignal(dict)
+    # Emitted after a successful process — carries the ProcessedSpectra object
+    # so Step 2 can load it directly without a file round-trip.
+    result_ready = pyqtSignal(object)
 
     def __init__(self, file_history=None, notes_panel=None):
         super().__init__()
@@ -133,8 +136,8 @@ class Step1Widget(QWidget):
             f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
         self._spec_path_label.setWordWrap(False)
         path_row.addWidget(self._spec_path_label, stretch=1)
-        browse_btn = QPushButton("Browse…")
-        browse_btn.setFixedWidth(70)
+        browse_btn = QPushButton("Browse")
+        browse_btn.setFixedWidth(75)
         browse_btn.setFixedHeight(26)
         browse_btn.clicked.connect(self._on_browse_spectrum)
         path_row.addWidget(browse_btn)
@@ -368,8 +371,12 @@ class Step1Widget(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _on_browse_spectrum(self):
+        # Start the dialog in the folder of the last-used file (if any),
+        # otherwise fall back to the user's home directory.
+        recent = self._spectrum_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         fp, _ = QFileDialog.getOpenFileName(
-            self, "Select Spectrum File", "", "CSV Files (*.csv)")
+            self, "Select Spectrum File", start_dir, "CSV Files (*.csv)")
         if fp:
             self._set_spectrum_path(Path(fp))
 
@@ -457,6 +464,9 @@ class Step1Widget(QWidget):
                 f"to {np.max(self.processed_data.corrected):.2e}"
             )
             self.save_button.setEnabled(True)
+
+            # Notify next step — pass data object directly (no file round-trip)
+            self.result_ready.emit(self.processed_data)
 
         self.process_button.setEnabled(True)
 
@@ -683,11 +693,14 @@ class Step1Widget(QWidget):
             show_error("Error", "No processed data to save")
             return
 
-        from PyQt6.QtWidgets import QFileDialog
         from datetime import datetime
 
+        # Start save dialog in the same folder as the loaded spectrum (if known)
+        recent = self._spectrum_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
+
         save_dir = QFileDialog.getExistingDirectory(
-            self, "Select Save Directory", str(Path.home()))
+            self, "Select Save Directory", start_dir)
         if not save_dir:
             return
 

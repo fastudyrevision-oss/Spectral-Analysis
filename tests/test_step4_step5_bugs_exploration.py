@@ -201,12 +201,9 @@ class TestBug3ValidateWorkerStep5:
         processed_csv = _make_spectra_csv(tmp_path, "processed.csv")
         reference_csv = _make_spectra_csv(tmp_path, "reference.csv")
 
-        # Mock the file selectors
-        widget.processed_selector = MagicMock()
-        widget.processed_selector.get_filepath.return_value = processed_csv
-
-        widget.reference_selector = MagicMock()
-        widget.reference_selector.get_filepath.return_value = reference_csv
+        # Set paths using the current widget API (_processed_path / _active_ref_paths)
+        widget._processed_path = processed_csv
+        widget._active_ref_paths = [str(reference_csv)]
 
         # Set target wavelengths
         widget.target_wavelengths = [300.0, 400.0]

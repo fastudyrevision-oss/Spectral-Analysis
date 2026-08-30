@@ -42,7 +42,8 @@ STEP3_PARAMS = {
 # ==========================================
 STEP4_PARAMS = {
     'MIN_SCORE': 0,             # Minimum score threshold for analysis
-    'CONFIDENCE_THRESHOLD': 0.5, # Confidence threshold for element identification
+    # Note: confidence tier thresholds (High ≥10 wins, Medium 3–9, Low <3) are
+    # implemented directly in PerformanceCalculator._classify_confidence_tier().
 }
 
 # ==========================================

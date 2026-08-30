@@ -8,7 +8,7 @@ Two-column layout: scrollable controls on the left, charts + tables on the right
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget,
@@ -49,6 +49,10 @@ class Step4Widget(QWidget):
       tabbed result tables (bottom).
     """
 
+    # Emitted after successful analysis — carries the analysis_results dict
+    # so Step 5 can receive it directly without a file round-trip.
+    result_ready = pyqtSignal(object)
+
     def __init__(self, file_history=None, notes_panel=None):
         super().__init__()
         self.matching_files = []
@@ -78,11 +82,14 @@ class Step4Widget(QWidget):
         """Scrollable control panel (fixed width)."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         title = QLabel("Step 4: Elemental Preferences & Peak Competition")
         tf = QFont(); tf.setBold(True); tf.setPointSize(12)
         title.setFont(tf)
         title.setStyleSheet(step_title_font(13))
+        title.setWordWrap(True)
         layout.addWidget(title)
         self._title_label = title
 
@@ -311,8 +318,10 @@ class Step4Widget(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _on_add_files(self):
+        recent = self._matching_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Select NIST Matching Files", "", "CSV Files (*.csv)")
+            self, "Select NIST Matching Files", start_dir, "CSV Files (*.csv)")
         if files:
             for fp in files:
                 if fp not in self.matching_files:
@@ -380,7 +389,8 @@ class Step4Widget(QWidget):
             self.files_label.setStyleSheet("font-size: 10px; color: #4CAF50;")
 
     def _on_analyze_clicked(self):
-        if not self.matching_files:
+        has_inmemory = getattr(self, '_step3_inmemory_df', None) is not None
+        if not self.matching_files and not has_inmemory:
             show_error("Error", "Please select at least one matching file")
             return
         self.info_label.setText("Loading files…")
@@ -400,15 +410,25 @@ class Step4Widget(QWidget):
             import pandas as pd
             analyzer = ElementalPreferencesAnalyzer(STEP4_PARAMS)
             dataframes = []
-            for filepath in self.matching_files:
-                logger.info(f"Loading {filepath}")
-                df = pd.read_csv(filepath)
-                logger.info(f"Loaded {len(df)} rows from {Path(filepath).name}")
-                dataframes.append(df)
+
+            # Use in-memory DataFrame from Step 3 if available
+            inmemory_df = getattr(self, '_step3_inmemory_df', None)
+            if inmemory_df is not None and not inmemory_df.empty:
+                dataframes.append(inmemory_df)
+                logger.info(
+                    f"Using in-memory Step 3 data: {len(inmemory_df)} rows"
+                )
+            else:
+                for filepath in self.matching_files:
+                    logger.info(f"Loading {filepath}")
+                    df = pd.read_csv(filepath)
+                    logger.info(f"Loaded {len(df)} rows from {Path(filepath).name}")
+                    dataframes.append(df)
+
             if not dataframes:
                 return False, "No data loaded from files"
             logger.info(
-                f"Analysing {len(dataframes)} file(s) with "
+                f"Analysing {len(dataframes)} source(s) with "
                 f"{sum(len(d) for d in dataframes)} total rows")
             self.analysis_results = analyzer.analyze(dataframes)
             return True, "Analysis completed successfully"
@@ -462,6 +482,9 @@ class Step4Widget(QWidget):
             f"Analysis complete! Primary element: "
             f"{self.analysis_results['primary_element']}")
         logger.info("Analysis finished successfully")
+
+        # Notify next step — pass results directly (no file round-trip)
+        self.result_ready.emit(self.analysis_results)
 
     # ──────────────────────────────────────────────────────────────────────
     # Data renderers
@@ -543,7 +566,9 @@ class Step4Widget(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _on_export_csv_clicked(self):
-        directory = QFileDialog.getExistingDirectory(self, "Select Export Directory", "")
+        recent = self._matching_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
+        directory = QFileDialog.getExistingDirectory(self, "Select Export Directory", start_dir)
         if not directory:
             return
         try:
@@ -558,7 +583,9 @@ class Step4Widget(QWidget):
             show_error("Export Failed", f"Failed to export CSV:\n{e}")
 
     def _on_export_png_clicked(self):
-        directory = QFileDialog.getExistingDirectory(self, "Select Export Directory", "")
+        recent = self._matching_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
+        directory = QFileDialog.getExistingDirectory(self, "Select Export Directory", start_dir)
         if not directory:
             return
         try:
@@ -568,12 +595,52 @@ class Step4Widget(QWidget):
             logger.error(f"PNG export failed: {e}")
             show_error("Export Failed", f"Failed to export PNG:\n{e}")
 
+    def load_from_step3(self, matches) -> None:
+        """
+        Auto-load Step 3 NIST match results directly into Step 4.
+
+        matches — list[NISTMatch] from Step 3.
+        Converts to a DataFrame (same schema as the CSV the analyzer expects)
+        and registers it as the single in-memory matching file.
+        """
+        if not matches:
+            return
+        import pandas as pd
+        rows = [{
+            "Observed_WL":         m.observed_wl,
+            "Matched_WL":          m.matched_wl if m.matched_wl is not None else "",
+            "Delta":               m.delta if m.delta is not None else "",
+            "Aki":                 m.aki,
+            "Relative_Intensity":  m.relative_intensity,
+            "Score":               m.score,
+            "Element":             m.element if m.element is not None else "",
+        } for m in matches]
+        df = pd.DataFrame(rows)
+
+        # Store the DataFrame where the analyzer worker can find it
+        self._step3_inmemory_df = df
+
+        n = len(matches)
+        self.matching_files = []   # clear file paths — using in-memory data
+        self._files_list_widget.clear()
+        self._files_list_widget.addItem(
+            QListWidgetItem(f"← {n} matches loaded from Step 3 (in-memory)"))
+        self._refresh_files_label()
+        self.info_label.setText(
+            f"✅ {n:,} NIST matches loaded from Step 3.\n"
+            "Click 'Analyze Competition' to proceed."
+        )
+        logger.info("Step 4: in-memory matches loaded from Step 3 (%d rows)", n)
+
     def _on_save_clicked(self):
         if self.analysis_results is None:
             show_error("Error", "No results to save")
             return
+        recent = self._matching_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "Save Results", "analysis_results", "CSV Files (*.csv)")
+            self, "Save Results", str(Path(start_dir) / "analysis_results"),
+            "CSV Files (*.csv)")
         if not filepath:
             return
         try:

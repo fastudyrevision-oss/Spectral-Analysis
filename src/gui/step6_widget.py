@@ -724,8 +724,17 @@ class Step6Widget(QWidget):
             show_error("Export Error", "No results to export. Run Compute Metrics first.")
             return
 
+        # Open dialog in step5's last-used folder (most relevant context)
+        proc_history = getattr(
+            getattr(self.step5_tab, "_processed_history", None),
+            "get_recent", lambda: []
+        )()
+        start_dir = str(Path(proc_history[0]).parent) if proc_history else str(Path.home())
+
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "Export CSV", "step6_performance", "CSV Files (*.csv)"
+            self, "Export CSV",
+            str(Path(start_dir) / "step6_performance"),
+            "CSV Files (*.csv)"
         )
         if not filepath:
             return  # Silently cancel (Requirement 10.5)
@@ -743,8 +752,16 @@ class Step6Widget(QWidget):
             show_error("Export Error", "No results to export. Run Compute Metrics first.")
             return
 
+        proc_history = getattr(
+            getattr(self.step5_tab, "_processed_history", None),
+            "get_recent", lambda: []
+        )()
+        start_dir = str(Path(proc_history[0]).parent) if proc_history else str(Path.home())
+
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "Export PNG", "step6_charts", "PNG Files (*.png)"
+            self, "Export PNG",
+            str(Path(start_dir) / "step6_charts"),
+            "PNG Files (*.png)"
         )
         if not filepath:
             return  # Silently cancel (Requirement 10.5)
@@ -763,8 +780,16 @@ class Step6Widget(QWidget):
             show_error("Export Error", "No results to export. Run Compute Metrics first.")
             return
 
+        proc_history = getattr(
+            getattr(self.step5_tab, "_processed_history", None),
+            "get_recent", lambda: []
+        )()
+        start_dir = str(Path(proc_history[0]).parent) if proc_history else str(Path.home())
+
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "Export PDF Report", "step6_performance_report", "PDF Files (*.pdf)"
+            self, "Export PDF Report",
+            str(Path(start_dir) / "step6_performance_report"),
+            "PDF Files (*.pdf)"
         )
         if not filepath:
             return  # Silently cancel (Requirement 10.5)

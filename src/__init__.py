@@ -22,7 +22,7 @@ from .validators import (
     validate_csv_columns
 )
 
-__version__ = "1.0.0"
+__version__ = "1.1.1"
 __author__ = "Spectral Analysis Team"
 
 __all__ = [

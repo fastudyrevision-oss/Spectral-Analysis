@@ -10,6 +10,8 @@ data already stored on the step widgets and presents it.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -218,6 +220,24 @@ class SummaryWidget(QWidget):
         self._reload_button.clicked.connect(self.refresh)
         title_row.addWidget(self._reload_button)
 
+        self._export_png_btn = QPushButton("🖼  Export PNG")
+        self._export_png_btn.setToolTip("Save all summary charts as PNG images")
+        self._export_png_btn.setStyleSheet(secondary_button_style())
+        self._export_png_btn.clicked.connect(self._on_export_png)
+        title_row.addWidget(self._export_png_btn)
+
+        self._export_csv_btn = QPushButton("📄  Export CSV")
+        self._export_csv_btn.setToolTip("Save all summary tables as CSV files")
+        self._export_csv_btn.setStyleSheet(secondary_button_style())
+        self._export_csv_btn.clicked.connect(self._on_export_csv)
+        title_row.addWidget(self._export_csv_btn)
+
+        self._export_pdf_btn = QPushButton("📑  Export PDF")
+        self._export_pdf_btn.setToolTip("Save a full summary report as a PDF")
+        self._export_pdf_btn.setStyleSheet(secondary_button_style())
+        self._export_pdf_btn.clicked.connect(self._on_export_pdf)
+        title_row.addWidget(self._export_pdf_btn)
+
         self._clear_button = QPushButton("✕  Clear")
         self._clear_button.setToolTip("Reset all charts and tables to their placeholder state")
         self._clear_button.setStyleSheet(secondary_button_style())
@@ -403,6 +423,9 @@ class SummaryWidget(QWidget):
         from src.gui.theme import secondary_button_style
         self._reload_button.setStyleSheet(secondary_button_style())
         self._clear_button.setStyleSheet(secondary_button_style())
+        self._export_png_btn.setStyleSheet(secondary_button_style())
+        self._export_csv_btn.setStyleSheet(secondary_button_style())
+        self._export_pdf_btn.setStyleSheet(secondary_button_style())
 
         # Stat cards
         if hasattr(self, '_card_frames'):
@@ -705,6 +728,277 @@ class SummaryWidget(QWidget):
             self._card_mean_vc.setText("—")
 
     # ── Conclusions ───────────────────────────────────────────────────────
+
+    # ── Exports ───────────────────────────────────────────────────────────
+
+    def _pick_export_dir(self) -> Path | None:
+        """Ask the user to choose an output folder. Returns None if cancelled."""
+        from PyQt6.QtWidgets import QFileDialog
+        d = QFileDialog.getExistingDirectory(self, "Select Export Directory",
+                                             str(Path.home()))
+        return Path(d) if d else None
+
+    def _on_export_png(self) -> None:
+        """Save every summary chart as a separate PNG into a chosen directory."""
+        from src.gui.gui_utils import show_error, show_info
+        out_dir = self._pick_export_dir()
+        if out_dir is None:
+            return
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        charts = [
+            (self._s1_fig,      f"summary_step1_corrected_{ts}.png"),
+            (self._peak_fig,    f"summary_step2_peak_dist_{ts}.png"),
+            (self._elem_fig,    f"summary_step3_elem_freq_{ts}.png"),
+            (self._score_fig,   f"summary_step3_match_scores_{ts}.png"),
+            (self._rank_fig,    f"summary_step4_ranking_{ts}.png"),
+            (self._scatter_fig, f"summary_step4_scatter_{ts}.png"),
+            (self._vc_fig,      f"summary_step5_vc_hist_{ts}.png"),
+        ]
+        saved, failed = [], []
+        for fig, fname in charts:
+            path = out_dir / fname
+            try:
+                fig.savefig(str(path), dpi=150, bbox_inches="tight",
+                            facecolor=fig.get_facecolor())
+                saved.append(fname)
+            except Exception as exc:
+                logger.warning("PNG export failed for %s: %s", fname, exc)
+                failed.append(fname)
+
+        if failed:
+            show_error("Export Partial",
+                       f"Saved {len(saved)} chart(s).\n"
+                       f"Failed ({len(failed)}):\n" + "\n".join(failed))
+        else:
+            show_info("Export Successful",
+                      f"{len(saved)} chart(s) saved to:\n{out_dir}")
+        logger.info("Summary PNG export: %d saved, %d failed", len(saved), len(failed))
+
+    def _on_export_csv(self) -> None:
+        """Save every summary table as a separate CSV into a chosen directory."""
+        from src.gui.gui_utils import show_error, show_info
+        out_dir = self._pick_export_dir()
+        if out_dir is None:
+            return
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        def _table_to_df(table: QTableWidget) -> pd.DataFrame:
+            headers = [table.horizontalHeaderItem(c).text()
+                       for c in range(table.columnCount())]
+            rows = []
+            for r in range(table.rowCount()):
+                row = []
+                for c in range(table.columnCount()):
+                    item = table.item(r, c)
+                    row.append(item.text() if item else "")
+                rows.append(row)
+            return pd.DataFrame(rows, columns=headers)
+
+        exports = [
+            (self._peaks_table, f"summary_step2_top_peaks_{ts}.csv"),
+            (self._rank_table,  f"summary_step4_top_elements_{ts}.csv"),
+            (self._vc_table,    f"summary_step5_vc_results_{ts}.csv"),
+        ]
+
+        # Also export full Step 4 ranking and Step 5 results if available
+        results4 = getattr(self._s4, 'analysis_results', None)
+        if results4:
+            for key, fname in [
+                ("ranking",      f"summary_step4_full_ranking_{ts}.csv"),
+                ("winner_lines", f"summary_step4_winner_lines_{ts}.csv"),
+                ("competition",  f"summary_step4_competition_{ts}.csv"),
+            ]:
+                df = results4.get(key)
+                if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
+                    try:
+                        df.to_csv(out_dir / fname, index=False)
+                    except Exception as exc:
+                        logger.warning("CSV export failed for %s: %s", fname, exc)
+
+        vresults = getattr(self._s5, 'validation_results', None)
+        if vresults is not None and not vresults.empty:
+            fname = f"summary_step5_full_validation_{ts}.csv"
+            try:
+                vresults.to_csv(out_dir / fname, index=False)
+            except Exception as exc:
+                logger.warning("CSV export failed for %s: %s", fname, exc)
+
+        saved, failed = [], []
+        for table, fname in exports:
+            if table.rowCount() == 0:
+                continue
+            path = out_dir / fname
+            try:
+                _table_to_df(table).to_csv(str(path), index=False)
+                saved.append(fname)
+            except Exception as exc:
+                logger.warning("CSV export failed for %s: %s", fname, exc)
+                failed.append(fname)
+
+        if not saved and not failed:
+            show_info("Nothing to Export",
+                      "No table data available yet — run the analysis steps first.")
+            return
+
+        if failed:
+            show_error("Export Partial",
+                       f"Saved {len(saved)} file(s).\n"
+                       f"Failed ({len(failed)}):\n" + "\n".join(failed))
+        else:
+            show_info("Export Successful",
+                      f"CSV files saved to:\n{out_dir}")
+        logger.info("Summary CSV export: %d saved, %d failed", len(saved), len(failed))
+
+    def _on_export_pdf(self) -> None:
+        """Generate a multi-page PDF summary report."""
+        from PyQt6.QtWidgets import QFileDialog
+        from src.gui.gui_utils import show_error, show_info
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"LIBS_Analysis_Summary_{ts}.pdf"
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Save Summary PDF",
+            str(Path.home() / default_name),
+            "PDF Files (*.pdf)"
+        )
+        if not filepath:
+            return
+
+        try:
+            from matplotlib.backends.backend_pdf import PdfPages
+            import matplotlib.pyplot as plt
+
+            with PdfPages(filepath) as pdf:
+
+                # ── Cover page ──────────────────────────────────────────
+                cover_fig = plt.figure(figsize=(8.27, 11.69))
+                cover_fig.patch.set_facecolor("#1A1D2B")
+                ax_c = cover_fig.add_axes([0, 0, 1, 1])
+                ax_c.set_facecolor("#1A1D2B")
+                ax_c.axis("off")
+
+                ax_c.text(0.5, 0.72, "LIBS Spectral Analysis",
+                          ha="center", va="center", fontsize=24,
+                          fontweight="bold", color="#3FA9F5",
+                          transform=ax_c.transAxes)
+                ax_c.text(0.5, 0.64, "Analysis Summary Report",
+                          ha="center", va="center", fontsize=16,
+                          color="#AEB7C4", transform=ax_c.transAxes)
+                ax_c.text(0.5, 0.56,
+                          datetime.now().strftime("%B %d, %Y  •  %H:%M"),
+                          ha="center", va="center", fontsize=11,
+                          color="#6B7589", transform=ax_c.transAxes)
+
+                # Key metrics block on cover
+                peaks_n    = len(getattr(self._s2, 'detected_peaks', None) or [])
+                matches    = getattr(self._s3, 'matches', None) or []
+                identified = {m.element for m in matches if getattr(m, 'element', None)}
+                results4   = getattr(self._s4, 'analysis_results', None)
+                primary    = (results4 or {}).get('primary_element', '—')
+                vresults   = getattr(self._s5, 'validation_results', None)
+                mean_vc_str = "—"
+                if vresults is not None and not vresults.empty:
+                    valid = vresults['Validation_Coefficient'].dropna()
+                    if not valid.empty:
+                        mean_vc_str = f"{valid.mean():.4f}"
+
+                metrics = [
+                    ("Detected Peaks",     str(peaks_n) if peaks_n else "—", "#3FA9F5"),
+                    ("Identified Elements", str(len(identified)) if identified else "—", "#3DDC97"),
+                    ("Primary Element",    primary, "#4CAF50"),
+                    ("Mean VC",            mean_vc_str, "#F4B942"),
+                ]
+                for i, (label, value, colour) in enumerate(metrics):
+                    x = 0.15 + i * 0.18
+                    ax_c.text(x, 0.42, value, ha="center", va="center",
+                              fontsize=20, fontweight="bold", color=colour,
+                              transform=ax_c.transAxes)
+                    ax_c.text(x, 0.37, label, ha="center", va="center",
+                              fontsize=8, color="#AEB7C4",
+                              transform=ax_c.transAxes)
+
+                pdf.savefig(cover_fig, bbox_inches="tight")
+                plt.close(cover_fig)
+
+                # ── One page per chart ──────────────────────────────────
+                chart_pages = [
+                    (self._s1_fig,      "Step 1 — Corrected Spectrum"),
+                    (self._peak_fig,    "Step 2 — Peak Intensity Distribution"),
+                    (self._elem_fig,    "Step 3 — Element Frequency"),
+                    (self._score_fig,   "Step 3 — Match Score Scatter"),
+                    (self._rank_fig,    "Step 4 — Element Ranking"),
+                    (self._scatter_fig, "Step 4 — Emission Line Scores"),
+                    (self._vc_fig,      "Step 5 — Validation Coefficient Distribution"),
+                ]
+                for src_fig, page_title in chart_pages:
+                    page_fig = plt.figure(figsize=(11, 7))
+                    page_fig.patch.set_facecolor(src_fig.get_facecolor())
+                    # Copy the rendered content by re-drawing via savefig to a buffer
+                    import io
+                    buf = io.BytesIO()
+                    src_fig.savefig(buf, format="png", dpi=130,
+                                    bbox_inches="tight",
+                                    facecolor=src_fig.get_facecolor())
+                    buf.seek(0)
+                    img = plt.imread(buf)
+                    ax_p = page_fig.add_subplot(111)
+                    ax_p.imshow(img)
+                    ax_p.axis("off")
+                    ax_p.set_title(page_title, fontsize=12,
+                                   color="#AEB7C4", pad=8)
+                    page_fig.tight_layout()
+                    pdf.savefig(page_fig, bbox_inches="tight")
+                    plt.close(page_fig)
+
+                # ── Conclusions page ────────────────────────────────────
+                conc_fig = plt.figure(figsize=(8.27, 11.69))
+                conc_fig.patch.set_facecolor("#1A1D2B")
+                ax_conc = conc_fig.add_axes([0.1, 0.1, 0.8, 0.8])
+                ax_conc.set_facecolor("#1A1D2B")
+                ax_conc.axis("off")
+                ax_conc.text(0.5, 0.95, "Conclusions",
+                             ha="center", va="top", fontsize=16,
+                             fontweight="bold", color="#3DDC97",
+                             transform=ax_conc.transAxes)
+
+                conc_parts = []
+                if peaks_n:
+                    conc_parts.append(f"  • {peaks_n} spectral peaks detected.")
+                if identified:
+                    conc_parts.append(
+                        f"  • {len(identified)} element(s) identified: "
+                        + ", ".join(sorted(identified)) + ".")
+                if primary and primary != "—":
+                    conc_parts.append(
+                        f"  • Primary element by competition analysis: {primary}.")
+                if mean_vc_str != "—":
+                    conc_parts.append(
+                        f"  • Validation: mean VC = {mean_vc_str}.")
+                if not conc_parts:
+                    conc_parts = ["  No analysis data available."]
+
+                ax_conc.text(0.05, 0.85, "\n\n".join(conc_parts),
+                             ha="left", va="top", fontsize=11,
+                             color="#AEB7C4", linespacing=1.6,
+                             transform=ax_conc.transAxes,
+                             wrap=True)
+                pdf.savefig(conc_fig, bbox_inches="tight")
+                plt.close(conc_fig)
+
+                # PDF metadata
+                info = pdf.infodict()
+                info['Title']   = "LIBS Analysis Summary"
+                info['Subject'] = "Spectral Analysis Software Report"
+                info['Creator'] = "LIBS Spectral Analysis Software"
+
+            show_info("Export Successful", f"PDF report saved to:\n{filepath}")
+            logger.info("Summary PDF export complete: %s", filepath)
+
+        except Exception as exc:
+            logger.exception("PDF export failed")
+            show_error("Export Failed", f"Failed to generate PDF:\n{exc}")
 
     def _refresh_conclusions(self):
         parts = []

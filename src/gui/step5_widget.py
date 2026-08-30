@@ -106,21 +106,16 @@ class Step5Widget(QWidget):
         """Scrollable control panel (fixed width)."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         title = QLabel("Step 5: Validation with Reference Spectra")
         tf = QFont(); tf.setBold(True); tf.setPointSize(12)
         title.setFont(tf)
         title.setStyleSheet(step_title_font(13))
+        title.setWordWrap(True)
         layout.addWidget(title)
         self._title_label = title
-
-        self.summary_banner = QLabel("Run validation to see summary")
-        self.summary_banner.setStyleSheet(summary_banner_style())
-        self.summary_banner.setWordWrap(True)
-        layout.addWidget(self.summary_banner)
-
-        self.mean_vc_label = QLabel("—")
-        layout.addWidget(self.mean_vc_label)
 
         instructions = QLabel(
             "📋 Instructions:\n"
@@ -141,6 +136,14 @@ class Step5Widget(QWidget):
         layout.addWidget(instructions)
         self._instructions_label = instructions
 
+        self.summary_banner = QLabel("Run validation to see summary")
+        self.summary_banner.setStyleSheet(summary_banner_style())
+        self.summary_banner.setWordWrap(True)
+        layout.addWidget(self.summary_banner)
+
+        self.mean_vc_label = QLabel("—")
+        layout.addWidget(self.mean_vc_label)
+
         files_group = QGroupBox("Input Spectra")
         fl = QVBoxLayout()
         fl.setContentsMargins(6, 8, 6, 8)
@@ -159,8 +162,8 @@ class Step5Widget(QWidget):
             f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
         self._proc_path_label.setWordWrap(False)
         proc_path_row.addWidget(self._proc_path_label, stretch=1)
-        proc_browse_btn = QPushButton("Browse…")
-        proc_browse_btn.setFixedWidth(70)
+        proc_browse_btn = QPushButton("Browse")
+        proc_browse_btn.setFixedWidth(75)
         proc_browse_btn.setFixedHeight(26)
         proc_browse_btn.clicked.connect(self._on_browse_processed)
         proc_path_row.addWidget(proc_browse_btn)
@@ -291,10 +294,19 @@ class Step5Widget(QWidget):
         wl_file_row.addWidget(self._wl_recent_btn)
         ll.addLayout(wl_file_row)
 
-        # Manual entry on its own row
+        # Manual entry + clear on one row
+        manual_row = QHBoxLayout()
+        manual_row.setSpacing(4)
         self.manual_lines_button = QPushButton("Enter Manually…")
+        self.manual_lines_button.setFixedHeight(26)
         self.manual_lines_button.clicked.connect(self._on_manual_wavelengths)
-        ll.addWidget(self.manual_lines_button)
+        manual_row.addWidget(self.manual_lines_button, stretch=3)
+        self._clear_wavelengths_btn = QPushButton("Clear")
+        self._clear_wavelengths_btn.setFixedHeight(26)
+        self._clear_wavelengths_btn.setToolTip("Clear all target wavelengths")
+        self._clear_wavelengths_btn.clicked.connect(self._on_clear_wavelengths)
+        manual_row.addWidget(self._clear_wavelengths_btn, stretch=1)
+        ll.addLayout(manual_row)
 
         lines_group.setLayout(ll)
         layout.addWidget(lines_group)
@@ -391,7 +403,6 @@ class Step5Widget(QWidget):
             "Rescan the Processed Data folder and rebuild the file list.\n"
             "Use after adding or removing pure-element files.")
         self._refresh_ref_btn.setFixedHeight(24)
-        self._refresh_ref_btn.setFixedWidth(70)
         self._refresh_ref_btn.clicked.connect(self._on_refresh_ref_folder)
         folder_row.addWidget(self._refresh_ref_btn)
         layout.addLayout(folder_row)
@@ -773,8 +784,10 @@ class Step5Widget(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _on_add_custom_ref_files(self):
+        recent = self._custom_ref_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Add Custom Reference Files", "",
+            self, "Add Custom Reference Files", start_dir,
             "CSV Files (*.csv);;All Files (*)")
         for fp in files:
             if fp not in self._custom_ref_paths:
@@ -822,8 +835,10 @@ class Step5Widget(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _on_browse_processed(self):
+        recent = self._processed_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         fp, _ = QFileDialog.getOpenFileName(
-            self, "Select Processed Spectrum", "", "CSV Files (*.csv)")
+            self, "Select Processed Spectrum", start_dir, "CSV Files (*.csv)")
         if fp:
             self._set_processed_path(Path(fp))
 
@@ -851,8 +866,10 @@ class Step5Widget(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _on_load_wavelengths(self):
+        recent = self._wavelengths_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         filepath, _ = QFileDialog.getOpenFileName(
-            self, "Select Wavelengths File", "",
+            self, "Select Wavelengths File", start_dir,
             "CSV Files (*.csv);;Text Files (*.txt)")
         if not filepath:
             return
@@ -910,12 +927,23 @@ class Step5Widget(QWidget):
             except ValueError as e:
                 show_error("Error", f"Invalid wavelength format:\n{e}")
 
+    def _on_clear_wavelengths(self):
+        """Clear all target wavelengths and reset the wavelength UI labels."""
+        self.target_wavelengths = []
+        self.wavelengths_label.setText("No wavelengths specified")
+        self._wl_path_label.setText("(No file loaded)")
+        self._wl_path_label.setStyleSheet(
+            f"font-size: 9pt; font-style: italic; color: {C_TEXT_MUTED}; "
+            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+        logger.info("Target wavelengths cleared")
+
     # ──────────────────────────────────────────────────────────────────────
     # Validation
     # ──────────────────────────────────────────────────────────────────────
 
     def _on_validate_clicked(self):
-        if self._processed_path is None:
+        has_inmemory = getattr(self, '_step1_inmemory_data', None) is not None
+        if self._processed_path is None and not has_inmemory:
             show_error("Error", "Please select a processed spectrum file")
             return
 
@@ -953,7 +981,15 @@ class Step5Widget(QWidget):
 
     def _validate_worker(self):
         try:
-            processed = pd.read_csv(str(self._processed_path))
+            # Use in-memory Step 1 data when available (no file read needed)
+            inmemory = getattr(self, '_step1_inmemory_data', None)
+            if inmemory is not None:
+                processed = pd.DataFrame({
+                    'Wavelength': inmemory.wavelength,
+                    'Corrected':  inmemory.corrected,
+                })
+            else:
+                processed = pd.read_csv(str(self._processed_path))
             # Merge all selected reference files into one DataFrame
             ref_frames = []
             for rp in getattr(self, "_active_ref_paths", []):
@@ -1230,8 +1266,12 @@ class Step5Widget(QWidget):
         if self.validation_results is None:
             show_error("Error", "No data to export")
             return
+        recent = self._processed_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "Export CSV", "validation_results", "CSV Files (*.csv)")
+            self, "Export CSV",
+            str(Path(start_dir) / "validation_results"),
+            "CSV Files (*.csv)")
         if not filepath:
             return
         try:
@@ -1242,8 +1282,12 @@ class Step5Widget(QWidget):
             show_error("Export Failed", f"Failed to export CSV:\n{e}")
 
     def _on_export_png_clicked(self):
+        recent = self._processed_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "Export PNG", "vc_histogram", "PNG Files (*.png)")
+            self, "Export PNG",
+            str(Path(start_dir) / "vc_histogram"),
+            "PNG Files (*.png)")
         if not filepath:
             return
         try:
@@ -1254,8 +1298,12 @@ class Step5Widget(QWidget):
             show_error("Export Failed", f"Failed to export PNG:\n{e}")
 
     def _on_export_pdf_clicked(self):
+        recent = self._processed_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "Export PDF Report", "LIBS_Validation_Report", "PDF Files (*.pdf)")
+            self, "Export PDF Report",
+            str(Path(start_dir) / "LIBS_Validation_Report"),
+            "PDF Files (*.pdf)")
         if not filepath:
             return
         params = {
@@ -1285,12 +1333,59 @@ class Step5Widget(QWidget):
             logger.error(f"PDF export failed: {e}")
             show_error("Export Failed", f"Failed to generate PDF:\n{e}")
 
+    def load_from_step1(self, processed_data) -> None:
+        """
+        Auto-load Step 1 processed spectrum directly into Step 5.
+
+        processed_data — a ProcessedSpectra object with .wavelength and .corrected arrays.
+        Stores it in-memory so the validation worker doesn't need to read a file.
+        """
+        if processed_data is None:
+            return
+        self._step1_inmemory_data = processed_data
+        self._processed_path = None   # no file — using in-memory object
+
+        n = len(processed_data.wavelength)
+        self._proc_path_label.setText("← loaded from Step 1")
+        self._proc_path_label.setStyleSheet(
+            f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
+            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+        self._proc_path_label.setToolTip(
+            "Spectrum data was passed in-memory from Step 1 — no file needed.")
+        self.info_label.setText(
+            f"✅ {n:,}-point spectrum loaded from Step 1.\n"
+            "Select reference files, set wavelengths, then validate."
+        )
+        logger.info("Step 5: in-memory spectrum loaded from Step 1 (%d points)", n)
+
+    def load_from_step4(self, analysis_results: dict) -> None:
+        """
+        Receive Step 4 analysis results (primary element hint).
+
+        Currently used only to pre-populate the status label with the
+        identified primary element — no hard dependency on this data for
+        validation to proceed.
+        """
+        if not analysis_results:
+            return
+        primary = analysis_results.get("primary_element", "")
+        if primary:
+            self.summary_banner.setText(
+                f"Primary element from Step 4: <b>{primary}</b> — "
+                "ready for validation."
+            )
+        logger.info("Step 5: received Step 4 primary element hint: %s", primary)
+
     def _on_save_clicked(self):
         if self.validation_results is None:
             show_error("Error", "No results to save")
             return
+        recent = self._processed_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "Save Validation Report", "validation_results", "CSV Files (*.csv)")
+            self, "Save Validation Report",
+            str(Path(start_dir) / "validation_results"),
+            "CSV Files (*.csv)")
         if filepath:
             try:
                 self.validation_results.to_csv(filepath, index=False)

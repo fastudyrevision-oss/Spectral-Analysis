@@ -120,10 +120,67 @@ class SpectralAnalysisApp(QMainWindow):
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.notes_panel.add_note("Application started", "INFO")
 
+        # ── Auto-handoff: wire step outputs to next-step inputs ────────────
+        # Data passes in-memory via signals — no file round-trip required.
+        # Each connection auto-loads data into the next step when processing
+        # completes. Tab switching is intentionally NOT automatic so users can
+        # inspect charts before moving on.
+        self.step1_tab.result_ready.connect(self._on_step1_result)
+        self.step2_tab.result_ready.connect(self._on_step2_result)
+        self.step3_tab.result_ready.connect(self._on_step3_result)
+        self.step4_tab.result_ready.connect(self._on_step4_result)
+
         # Restore last session silently
         self._restore_session()
 
         logger.info("GUI initialization complete")
+
+    # ── Auto-handoff handlers ─────────────────────────────────────────────────
+
+    def _on_step1_result(self, processed_data) -> None:
+        """Step 1 finished — pass data to Step 2 and Step 5."""
+        if processed_data is None:
+            return
+        self.step2_tab.load_from_step1(processed_data)
+        self.step5_tab.load_from_step1(processed_data)
+        self.notes_panel.add_note(
+            "Step 1 complete → data auto-loaded into Step 2 and Step 5", "INFO")
+        self.statusBar.showMessage(
+            "Step 1 done — Step 2 and Step 5 ready (data loaded)", 5000)
+
+    def _on_step2_result(self, detected_peaks) -> None:
+        """Step 2 finished — pass peaks to Step 3."""
+        if not detected_peaks:
+            return
+        self.step3_tab.load_from_step2(detected_peaks)
+        self.notes_panel.add_note(
+            f"Step 2 complete → {len(detected_peaks)} peaks auto-loaded into Step 3",
+            "INFO")
+        self.statusBar.showMessage(
+            f"Step 2 done — {len(detected_peaks)} peaks loaded into Step 3", 5000)
+
+    def _on_step3_result(self, matches) -> None:
+        """Step 3 finished — pass NIST matches to Step 4."""
+        if not matches:
+            return
+        self.step4_tab.load_from_step3(matches)
+        self.notes_panel.add_note(
+            f"Step 3 complete → {len(matches)} matches auto-loaded into Step 4",
+            "INFO")
+        self.statusBar.showMessage(
+            f"Step 3 done — {len(matches)} matches loaded into Step 4", 5000)
+
+    def _on_step4_result(self, analysis_results) -> None:
+        """Step 4 finished — send primary-element hint to Step 5."""
+        if not analysis_results:
+            return
+        self.step5_tab.load_from_step4(analysis_results)
+        primary = analysis_results.get("primary_element", "")
+        self.notes_panel.add_note(
+            f"Step 4 complete → primary element '{primary}' forwarded to Step 5",
+            "INFO")
+        self.statusBar.showMessage(
+            f"Step 4 done — primary element '{primary}' forwarded to Step 5", 5000)
 
     def _restore_session(self) -> None:
         """Silently restore step results from the last session on startup."""

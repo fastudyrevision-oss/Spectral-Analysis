@@ -8,11 +8,11 @@ Provides UI for peak detection with visualization and results table.
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget,
-    QSplitter, QScrollArea
+    QSplitter, QScrollArea, QFileDialog
 )
 from PyQt6.QtGui import QFont
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -49,6 +49,10 @@ class Step2Widget(QWidget):
     - Preview detected peaks
     - Save results
     """
+    
+    # Emitted after successful detection — carries list[DetectedPeak]
+    # so Step 3 can load it directly without a file round-trip.
+    result_ready = pyqtSignal(object)
     
     def __init__(self, file_history=None, notes_panel=None):
         """
@@ -139,8 +143,8 @@ class Step2Widget(QWidget):
             f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
         self._spec_path_label.setWordWrap(False)
         path_row.addWidget(self._spec_path_label, stretch=1)
-        browse_btn = QPushButton("Browse…")
-        browse_btn.setFixedWidth(70)
+        browse_btn = QPushButton("Browse")
+        browse_btn.setFixedWidth(75)
         browse_btn.setFixedHeight(26)
         browse_btn.clicked.connect(self._on_browse_spectrum)
         path_row.addWidget(browse_btn)
@@ -345,9 +349,10 @@ class Step2Widget(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _on_browse_spectrum(self):
-        from PyQt6.QtWidgets import QFileDialog
+        recent = self._spectrum_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         fp, _ = QFileDialog.getOpenFileName(
-            self, "Select Spectrum File", "", "CSV Files (*.csv)")
+            self, "Select Spectrum File", start_dir, "CSV Files (*.csv)")
         if fp:
             self._set_spectrum_path(Path(fp))
 
@@ -367,13 +372,18 @@ class Step2Widget(QWidget):
 
     def _on_process_clicked(self):
         """Detect peaks when button clicked."""
-        if self._spectrum_path is None:
+        if self._spectrum_path is None and self.processed_data is None:
             show_error("Error", "Please select an input file")
             return
-        
+
         self.info_label.setText("Loading file...")
         self.process_button.setEnabled(False)
-        
+
+        # If data was already loaded from Step 1 in-memory, skip file loading
+        if self._spectrum_path is None and self.processed_data is not None:
+            self._run_detection()
+            return
+
         # Try to load as processed spectra (with Corrected column)
         try:
             reader = CSVReader()
@@ -428,7 +438,7 @@ class Step2Widget(QWidget):
                 f"Loaded spectrum: {len(self.processed_data.wavelength)} points "
                 f"using column '{use_col}' ({src})"
             )
-            
+
         except Exception as e:
             logger.error(f"Failed to load file: {e}")
             show_error("Error", f"Failed to load file:\n{e}")
@@ -436,6 +446,10 @@ class Step2Widget(QWidget):
             self.info_label.setText("Error loading file")
             return
         
+        self._run_detection()
+
+    def _run_detection(self):
+        """Launch the peak detection worker (processed_data must already be set)."""
         # Create detector with parameters
         params = {
             'HEIGHT_MULTIPLIER': self.height_control.value(),
@@ -515,6 +529,9 @@ class Step2Widget(QWidget):
             
             # Enable save
             self.save_button.setEnabled(True)
+
+            # Notify next step — pass data directly (no file round-trip)
+            self.result_ready.emit(self.detected_peaks)
         
         self.process_button.setEnabled(True)
     
@@ -571,18 +588,47 @@ class Step2Widget(QWidget):
         self._table_next_btn.setEnabled(self._table_page < n_pages - 1)
         self._table_count_label.setText(f"{n_total:,} peaks total")
     
+    def load_from_step1(self, processed_data) -> None:
+        """
+        Auto-load Step 1 output directly into Step 2 (no file picker needed).
+
+        processed_data — a ProcessedSpectra object with .wavelength and .corrected arrays.
+        The file path label is updated to indicate the data came from Step 1.
+        """
+        if processed_data is None:
+            return
+        self.processed_data = processed_data
+        n = len(processed_data.wavelength)
+
+        # Update the UI path label so the user knows where data came from
+        self._spectrum_path = None   # no file on disk — data is in memory
+        self._spec_path_label.setText("← loaded from Step 1")
+        self._spec_path_label.setStyleSheet(
+            f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
+            f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;")
+        self._spec_path_label.setToolTip(
+            "Spectrum data was passed in-memory from Step 1 — no file needed.")
+
+        self.info_label.setText(
+            f"✅ {n:,} points loaded from Step 1.\n"
+            "Adjust parameters if needed, then click 'Detect Peaks'."
+        )
+        logger.info("Step 2: in-memory data loaded from Step 1 (%d points)", n)
+
     def _on_save_clicked(self):
         """Save detected peaks — user picks a directory, filenames get a timestamp."""
         if self.detected_peaks is None:
             show_error("Error", "No peaks to save")
             return
 
-        from PyQt6.QtWidgets import QFileDialog
+        from PyQt6.QtWidgets import QFileDialog  # already imported at top — kept for clarity
         from datetime import datetime
 
-        # Ask user where to save
+        # Open save dialog in the same folder as the loaded spectrum (if known)
+        recent = self._spectrum_history.get_recent()
+        start_dir = str(Path(recent[0]).parent) if recent else str(Path.home())
         save_dir = QFileDialog.getExistingDirectory(
-            self, "Select Save Directory", str(Path.home())
+            self, "Select Save Directory", start_dir
         )
         if not save_dir:
             return  # user cancelled
