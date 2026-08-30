@@ -45,6 +45,16 @@ Thumbs.db
 *.log
 output/
 results/
-*.csv
-*.png
-*.jpg
+
+# Ignore loose CSV/PNG outputs at the repo root but NOT database/data folders
+*.log
+spectral_analysis.log
+build_error.log
+
+# Never ignore the NIST database or reference data — the CI build needs them
+# (individual output CSVs at repo root are still ignored)
+/LIBS_matching_results.csv
+
+# Ignore generated output images at root
+/Automatic_peaks_identification.png
+/funnel_preview.png

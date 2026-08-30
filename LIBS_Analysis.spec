@@ -22,6 +22,7 @@ dist/LIBS_Analysis/
 """
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+import os
 
 # NOTE: block_cipher / cipher removed in PyInstaller 6.x
 
@@ -118,9 +119,10 @@ coll = COLLECT(
     # Uses Tree() so all CSV/XLSX files and subdirectories are included.
     Tree('NIST database', prefix='NIST database'),
     # Processed Data (pure-element reference CSVs for Step 5 validation).
-    # Installed to ProgramData by the ISS installer; Tree() copies it into
-    # _internal so the portable build and first-run installs also work.
-    Tree('Processed Data', prefix='Processed Data'),
+    # Guard: only include if the folder exists (may be absent on a bare CI clone
+    # that has not yet populated reference data).
+    *([Tree('Processed Data', prefix='Processed Data')]
+      if os.path.isdir('Processed Data') else []),
     strip=False,
     upx=False,
     name='LIBS_Analysis',

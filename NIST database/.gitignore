@@ -1,0 +1,2 @@
+# Exclude the auto-generated SQLite cache — it is rebuilt at runtime
+.nist_cache.db

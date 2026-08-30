@@ -6,27 +6,26 @@ name: Build Installer
 on:
   push:
     tags:
-      - "v*.*.*"          # e.g. v1.1.1 → produces a GitHub Release
+      - "v*.*.*"          # v1.1.1 → GitHub Release
     branches:
-      - main              # every push to main → build artifact (no release)
+      - main              # push to main → artifact only, no release
   pull_request:
     branches:
-      - main              # every PR to main → smoke-build (no upload)
-  workflow_dispatch:      # manual trigger from the Actions tab
+      - main              # PRs → smoke build
+  workflow_dispatch:
     inputs:
       create_release:
-        description: "Create a GitHub Release with the installer?"
+        description: "Create a GitHub Release?"
         required: false
         default: "false"
         type: choice
         options: ["true", "false"]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# One job — must run on Windows because:
-#   1. PyInstaller produces Windows binaries
-#   2. Inno Setup only runs on Windows
-#   3. PyQt6 requires a display (virtual framebuffer not needed for a build)
-# ─────────────────────────────────────────────────────────────────────────────
+# Cancel any in-progress run for the same ref (saves runner minutes)
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: PyInstaller + Inno Setup
@@ -38,25 +37,48 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Python ──────────────────────────────────────────────────────────
+      # Pin to the same minor version you develop on.
       - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          # Built-in pip cache — keyed on requirements.txt hash.
+          # On a cache hit the "install dependencies" step takes ~5 s.
           cache: "pip"
 
       # ── 3. Install Python dependencies ─────────────────────────────────────
       - name: Install Python dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip wheel
           pip install -r requirements.txt
-          pip install pyinstaller>=6.0 reportlab
+          pip install "pyinstaller>=6.0" reportlab
 
-      # ── 4. PyInstaller — build the EXE + data bundle ───────────────────────
-      - name: Build with PyInstaller
+      # ── 4. Cache PyInstaller work directory ───────────────────────────────
+      # PyInstaller's analysis phase re-resolves every import on every run.
+      # The work/ cache stores the dependency graph and bytecode.
+      # A hit reduces the analysis phase from ~8 min to ~2 min.
+      - name: Cache PyInstaller workdir
+        id: pyi-cache
+        uses: actions/cache@v4
+        with:
+          path: build
+          # Invalidate when spec, source, or dependencies change
+          key: pyinstaller-${{ runner.os }}-${{ hashFiles('LIBS_Analysis.spec', 'requirements.txt', 'src/**/*.py', 'gui_launcher.py') }}
+          restore-keys: |
+            pyinstaller-${{ runner.os }}-
+
+      # ── 5. PyInstaller ─────────────────────────────────────────────────────
+      # --clean only wipes the temp analysis cache, not the cached build/.
+      # We skip --clean when we have a cache hit to keep incremental builds fast.
+      - name: Build with PyInstaller (cache miss — full rebuild)
+        if: steps.pyi-cache.outputs.cache-hit != 'true'
         run: pyinstaller LIBS_Analysis.spec --clean
-        # Produces:  dist/LIBS_Analysis/LIBS_Analysis.exe
 
-      # ── 5. Verify EXE was produced ─────────────────────────────────────────
+      - name: Build with PyInstaller (cache hit — incremental)
+        if: steps.pyi-cache.outputs.cache-hit == 'true'
+        run: pyinstaller LIBS_Analysis.spec
+
+      # ── 6. Verify EXE ──────────────────────────────────────────────────────
       - name: Verify PyInstaller output
         shell: pwsh
         run: |
@@ -65,25 +87,36 @@ jobs:
             Write-Error "PyInstaller did not produce $exe"
             exit 1
           }
-          $size = (Get-Item $exe).Length / 1MB
-          Write-Host "✅ $exe  ($([math]::Round($size,1)) MB)"
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          Write-Host "✅  LIBS_Analysis.exe  ($mb MB)"
 
-      # ── 6. Inno Setup — build the installer ────────────────────────────────
-      - name: Install Inno Setup
+      # ── 7. Install Inno Setup ──────────────────────────────────────────────
+      # windows-latest ships with Chocolatey; Inno Setup 6 is ~4 MB.
+      # Cache the install so repeated runs don't re-download it.
+      - name: Cache Inno Setup
+        id: iscc-cache
+        uses: actions/cache@v4
+        with:
+          path: C:\Program Files (x86)\Inno Setup 6
+          key: innosetup-6-windows
+
+      - name: Install Inno Setup (if not cached)
+        if: steps.iscc-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Add ISCC to PATH
         shell: pwsh
         run: |
-          # chocolatey is pre-installed on windows-latest runners
-          choco install innosetup --no-progress -y
-          # Add ISCC.exe to PATH for subsequent steps
-          $isccDir = "C:\Program Files (x86)\Inno Setup 6"
-          echo "$isccDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          Write-Host "Inno Setup installed at $isccDir"
+          $dir = "C:\Program Files (x86)\Inno Setup 6"
+          echo "$dir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      # ── 8. Build installer ─────────────────────────────────────────────────
       - name: Build installer with Inno Setup
         shell: pwsh
         run: |
-          $distDir  = "${{ github.workspace }}\dist\LIBS_Analysis"
-          $outDir   = "${{ github.workspace }}\installer"
+          $distDir = "${{ github.workspace }}\dist\LIBS_Analysis"
+          $outDir  = "${{ github.workspace }}\installer"
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
           iscc `
@@ -91,13 +124,12 @@ jobs:
             "/DOutputDir=$outDir" `
             "libs_spectral_analysis_ci.iss"
 
-          # List what was produced
           Get-ChildItem $outDir | ForEach-Object {
             $mb = [math]::Round($_.Length / 1MB, 1)
-            Write-Host "✅ $($_.Name)  ($mb MB)"
+            Write-Host "✅  $($_.Name)  ($mb MB)"
           }
 
-      # ── 7. Verify installer was produced ───────────────────────────────────
+      # ── 9. Verify installer ────────────────────────────────────────────────
       - name: Verify installer output
         shell: pwsh
         run: |
@@ -106,24 +138,26 @@ jobs:
             Write-Error "Inno Setup did not produce an installer"
             exit 1
           }
-          Write-Host "✅ Installer: $($setup.Name)  ($([math]::Round($setup.Length/1MB,1)) MB)"
+          $mb = [math]::Round($setup.Length / 1MB, 1)
+          Write-Host "✅  $($setup.Name)  ($mb MB)"
 
-      # ── 8. Upload installer as a workflow artifact (all builds) ────────────
+      # ── 10. Zip portable build ─────────────────────────────────────────────
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "dist\LIBS_Analysis\*" `
+            -DestinationPath "installer\LIBS_Analysis_Portable.zip"
+          $mb = [math]::Round((Get-Item "installer\LIBS_Analysis_Portable.zip").Length / 1MB, 1)
+          Write-Host "✅  LIBS_Analysis_Portable.zip  ($mb MB)"
+
+      # ── 11. Upload artifacts ───────────────────────────────────────────────
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: LIBS_Spectral_Analysis_Installer
           path: installer/*.exe
           retention-days: 30
-
-      # ── 9. Upload portable build as a workflow artifact ─────────────────────
-      - name: Zip portable build
-        shell: pwsh
-        run: |
-          Compress-Archive `
-            -Path "dist\LIBS_Analysis\*" `
-            -DestinationPath "installer\LIBS_Analysis_Portable.zip"
-          Write-Host "✅ Portable ZIP created"
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
@@ -132,30 +166,30 @@ jobs:
           path: installer/LIBS_Analysis_Portable.zip
           retention-days: 30
 
-      # ── 10. Create GitHub Release (tag pushes + manual with create_release) ─
-      - name: Determine whether to publish a release
+      # ── 12. GitHub Release (tags + manual) ────────────────────────────────
+      - name: Should we publish a release?
         id: should_release
         shell: pwsh
         run: |
           $isTag    = "${{ github.ref_type }}" -eq "tag"
           $isManual = "${{ github.event.inputs.create_release }}" -eq "true"
-          $publish  = $isTag -or $isManual
+          $publish  = ($isTag -or $isManual).ToString().ToLower()
           echo "publish=$publish" >> $env:GITHUB_OUTPUT
-          Write-Host "Publish release: $publish  (isTag=$isTag, isManual=$isManual)"
+          Write-Host "publish=$publish"
 
-      - name: Extract version from tag or ISS
+      - name: Extract version
         id: version
         shell: pwsh
         run: |
           if ("${{ github.ref_type }}" -eq "tag") {
-            $ver = "${{ github.ref_name }}" -replace '^v',''
+            $ver = "${{ github.ref_name }}" -replace '^v', ''
           } else {
-            # Fall back to the version defined in the CI ISS file
             $ver = (Select-String -Path "libs_spectral_analysis_ci.iss" `
-                      -Pattern '#define MyAppVersion\s+"([^"]+)"').Matches[0].Groups[1].Value
+                      -Pattern '#define MyAppVersion\s+"([^"]+)"'
+                    ).Matches[0].Groups[1].Value
           }
           echo "version=$ver" >> $env:GITHUB_OUTPUT
-          Write-Host "Version: $ver"
+          Write-Host "version=$ver"
 
       - name: Create GitHub Release
         if: steps.should_release.outputs.publish == 'true'
@@ -164,34 +198,14 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.version.outputs.version) }}
           name: "LIBS Spectral Analysis v${{ steps.version.outputs.version }}"
           body: |
-            ## LIBS Spectral Analysis Software v${{ steps.version.outputs.version }}
+            ## LIBS Spectral Analysis v${{ steps.version.outputs.version }}
 
-            ### Downloads
             | File | Description |
             |------|-------------|
-            | `LIBS_Spectral_Analysis_Setup_*.exe` | Windows installer (recommended) |
-            | `LIBS_Analysis_Portable.zip` | Portable build — unzip and run `LIBS_Analysis.exe` |
+            | `LIBS_Spectral_Analysis_Setup_*.exe` | Windows installer — run as Administrator |
+            | `LIBS_Analysis_Portable.zip` | No-install portable build |
 
-            ### What's included
-            - Full 6-step LIBS analysis pipeline
-            - Built-in NIST neutral + ionic line databases
-            - Dark / light theme toggle
-            - Step-to-step auto-handoff (no intermediate file saves needed)
-            - Analysis Summary dashboard with PNG / CSV / PDF export
-            - Session persistence across launches
-
-            ### Installation (installer)
-            1. Run `LIBS_Spectral_Analysis_Setup_*.exe` as Administrator
-            2. Follow the wizard — NIST databases are installed to `C:\ProgramData\LIBS_Analysis\`
-            3. Launch from the Start Menu or Desktop shortcut
-
-            ### Installation (portable)
-            1. Unzip `LIBS_Analysis_Portable.zip` to any folder
-            2. Run `LIBS_Analysis.exe`
-            3. No admin rights required; no installer needed
-
-            ---
-            Built from commit ${{ github.sha }}
+            **Built from** `${{ github.sha }}`
           files: |
             installer/*.exe
             installer/LIBS_Analysis_Portable.zip
