@@ -26,22 +26,15 @@ import os
 
 # NOTE: block_cipher / cipher removed in PyInstaller 6.x
 
-# ── Collect data files from heavy packages ─────────────────────────────────
-scipy_datas = collect_data_files('scipy')
-mpl_datas   = collect_data_files('matplotlib')
-pyqt6_datas = collect_data_files('PyQt6')
+# ── Collect data files from packages that need assets ───────────────────────
+mpl_datas = collect_data_files('matplotlib', include_py_files=False)
 
 a = Analysis(
     ['gui_launcher.py'],
     pathex=['.'],
     binaries=[],
     datas=[
-        # Application source tree (frozen Python modules)
-        ('src', 'src'),
-        # Heavy library data
-        *scipy_datas,
         *mpl_datas,
-        *pyqt6_datas,
     ],
     hiddenimports=[
         # scipy
@@ -55,6 +48,8 @@ a = Analysis(
         'scipy.linalg.lapack',
         'scipy.signal',
         'scipy.signal._peak_finding',
+        'scipy.optimize',
+        'scipy.interpolate',
         'scipy._lib.messagestream',
         # matplotlib Qt6 backend
         'matplotlib.backends.backend_qtagg',
@@ -68,7 +63,7 @@ a = Analysis(
         'pandas._libs.tslibs.np_datetime',
         'pandas._libs.tslibs.nattype',
         'pandas._libs.tslibs.timedeltas',
-        # numpy — NOTE: numpy.core._methods removed in NumPy 2.x, do NOT include
+        # numpy
         'numpy.lib.format',
         # reportlab (PDF export, optional)
         'reportlab',
@@ -87,10 +82,30 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'tkinter', '_tkinter',
-        'IPython', 'jupyter', 'notebook',
+        # Fix AttributeError: module 'pyarrow' has no attribute '__version__'
+        'pyarrow',
+        # Exclude massive machine learning / deep learning packages
+        'torch', 'torchvision', 'torchaudio',
+        'transformers', 'tokenizers', 'safetensors', 'sentence_transformers',
+        'tensorflow', 'tensorboard', 'keras',
+        'onnx', 'onnxruntime',
+        'cv2', 'opencv',
+        'sklearn', 'scikit_learn',
+        'numba', 'llvmlite',
+        # Exclude web frameworks & servers
+        'django', 'flask', 'starlette', 'fastapi', 'uvicorn', 'streamlit',
+        'tornado', 'twisted', 'aiohttp', 'httpx', 'requests_toolbelt',
+        # Exclude unused database drivers & ORMs (keep sqlite3 / _sqlite3)
+        'sqlalchemy', 'psycopg2', 'psycopg2_binary', 'MySQLdb', 'pymysql',
+        'peewee', 'redis', 'pymongo',
+        # Exclude automation & browser drivers
+        'selenium', 'playwright', 'webdriver_manager', 'pywinauto', 'uiautomation',
+        # Exclude development, test, and interactive tools
+        'IPython', 'jupyter', 'notebook', 'ipywidgets',
         'google.colab',
-        '_pytest', 'pytest',
+        'tkinter', '_tkinter',
+        'PyQt5', 'PySide2', 'PySide6',
+        '_pytest', 'pytest', 'pytest_cov', 'hypothesis', 'unittest',
     ],
     noarchive=False,
 )
