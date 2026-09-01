@@ -13,6 +13,16 @@ from pathlib import Path
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# Ensure Windows associates the process with our AppUserModelID for taskbar grouping & icon
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "jfdtech.libsspectralanalysis.1.1.1"
+        )
+    except Exception:
+        pass
+
 
 def _show_fatal_error(error_msg: str) -> None:
     """Display a fatal error message to the user before application exits."""

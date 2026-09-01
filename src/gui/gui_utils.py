@@ -73,14 +73,23 @@ def get_asset_path(filename: str = "icon.png") -> Path:
 
 def get_app_icon() -> QIcon:
     """Return the application QIcon loaded from bundled assets."""
-    icon = QIcon()
     ico_path = get_asset_path("icon.ico")
     png_path = get_asset_path("icon.png")
 
+    icon = QIcon()
     if ico_path.exists():
-        icon.addFile(str(ico_path))
+        icon = QIcon(str(ico_path))
+    
     if png_path.exists():
-        icon.addFile(str(png_path))
+        pix = QPixmap(str(png_path))
+        if not pix.isNull():
+            for sz in [16, 24, 32, 48, 64, 128, 256]:
+                icon.addPixmap(pix.scaled(
+                    sz, sz,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                ))
+
     return icon
 
 

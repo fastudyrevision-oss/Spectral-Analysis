@@ -156,9 +156,9 @@ Root: HKLM; Subkey: "Software\{#MyAppPublisher}\{#MyAppName}"; \
 ; ── [Icons] ──────────────────────────────────────────────────────────────────
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
-  WorkingDir: "{app}"
+  WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "jfdtech.libsspectralanalysis.1.1.1"
 Name: "{autodesktop}\{#MyAppName}";  Filename: "{app}\{#MyAppExeName}"; \
-  Tasks: desktopicon; WorkingDir: "{app}"
+  Tasks: desktopicon; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "jfdtech.libsspectralanalysis.1.1.1"
 
 ; ── [Run] ────────────────────────────────────────────────────────────────────
 [Run]

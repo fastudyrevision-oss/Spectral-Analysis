@@ -103,35 +103,83 @@ class ValidationAnalyzer:
         Returns
         -------
         pd.DataFrame
-            DataFrame with normalized column names
+            DataFrame with normalized column names ('wavelength' and 'intensity')
         """
-        df.columns = df.columns.str.strip()
+        if df is None or df.empty:
+            raise ValidationError("Spectrum data is empty")
+
+        df = df.copy()
+        df.columns = df.columns.astype(str).str.strip()
         cols_lower = {col.lower(): col for col in df.columns}
         
-        # Detect wavelength column
+        # 1. Detect wavelength column
         wl_col = None
-        for variant in ['wavelength', 'wl', 'wavelength (nm)', 'wave', 'lambda']:
+        wl_variants = [
+            'wavelength', 'wavelength (nm)', 'wavelength(nm)', 'wavelength [nm]', 'wavelength/nm',
+            'wl', 'wl (nm)', 'wl(nm)', 'wave', 'lambda', 'x',
+        ]
+        for variant in wl_variants:
             if variant in cols_lower:
                 wl_col = cols_lower[variant]
                 break
         
-        # Detect intensity column
+        if wl_col is None:
+            # Substring fallback for wavelength
+            for col_l, orig in cols_lower.items():
+                if 'wavelength' in col_l or col_l.startswith('wl') or 'lambda' in col_l:
+                    wl_col = orig
+                    break
+        
+        # 2. Detect intensity column
         int_col = None
-        for variant in ['intensity', 'intensity (arb. u.)', 'counts', 'signal']:
+        int_variants = [
+            'corrected', 'corrected_intensity', 'corrected intensity', 'corrected_intens',
+            'intensity', 'intensity (arb. u.)', 'intensity (a.u.)', 'intensity(a.u.)',
+            'intensity (counts)', 'intensity/a.u.', 'intensity [a.u.]', 'intensity [counts]',
+            'counts', 'signal', 'raw', 'smoothed_sg', 'data', 'y', 'val', 'value',
+            'relative_intensity', 'rel_intensity', 'rel intensity', 'realtive_intensity',
+        ]
+        for variant in int_variants:
             if variant in cols_lower:
                 int_col = cols_lower[variant]
                 break
         
+        if int_col is None:
+            # Substring fallback for intensity
+            for key in ['correct', 'intens', 'count', 'signal', 'smooth', 'raw', 'data', 'val']:
+                for col_l, orig in cols_lower.items():
+                    if orig != wl_col and key in col_l:
+                        int_col = orig
+                        break
+                if int_col is not None:
+                    break
+        
+        # 3. Positional fallback: if at least 2 columns exist
+        if (wl_col is None or int_col is None) and df.shape[1] >= 2:
+            num_cols = [c for c in df.columns if pd.to_numeric(df[c], errors='coerce').notna().sum() > 0]
+            if len(num_cols) >= 2:
+                if wl_col is None and int_col is None:
+                    wl_col = num_cols[0]
+                    int_col = num_cols[1]
+                elif wl_col is None:
+                    candidates = [c for c in num_cols if c != int_col]
+                    if candidates:
+                        wl_col = candidates[0]
+                elif int_col is None:
+                    candidates = [c for c in num_cols if c != wl_col]
+                    if candidates:
+                        int_col = candidates[0]
+
         if wl_col is None or int_col is None:
-            raise ValidationError("Cannot detect wavelength and/or intensity columns")
+            raise ValidationError(f"Cannot detect wavelength and/or intensity columns from columns: {list(df.columns)}")
         
-        # Create normalized DataFrame
+        # Create normalized DataFrame with numeric conversion
         result = pd.DataFrame({
-            'wavelength': df[wl_col],
-            'intensity': df[int_col]
-        })
+            'wavelength': pd.to_numeric(df[wl_col], errors='coerce'),
+            'intensity': pd.to_numeric(df[int_col], errors='coerce')
+        }).dropna()
         
-        logger.info(f"Normalized columns: {wl_col} -> wavelength, {int_col} -> intensity")
+        logger.info(f"Normalized columns: {wl_col} -> wavelength, {int_col} -> intensity ({len(result)} valid rows)")
         
         return result
     

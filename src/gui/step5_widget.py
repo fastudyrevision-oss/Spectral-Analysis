@@ -989,10 +989,14 @@ class Step5Widget(QWidget):
             if inmemory is not None:
                 processed = pd.DataFrame({
                     'Wavelength': inmemory.wavelength,
+                    'Intensity':  inmemory.corrected,
                     'Corrected':  inmemory.corrected,
                 })
             else:
-                processed = pd.read_csv(str(self._processed_path))
+                try:
+                    processed = pd.read_csv(str(self._processed_path))
+                except Exception:
+                    processed = pd.read_csv(str(self._processed_path), sep=None, engine='python')
             # Merge all selected reference files into one DataFrame
             ref_frames = []
             for rp in getattr(self, "_active_ref_paths", []):
