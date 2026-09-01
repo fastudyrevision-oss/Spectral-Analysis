@@ -450,7 +450,9 @@ class PerformanceCalculator:
             n_good  = int((vc_vals >= 0.50).sum())
             if n_good > 0:
                 # Distribute confirmed status to elements with enough ranked wins
-                ranking_df_local = analysis_results.get("ranking_df") or analysis_results.get("ranking")
+                ranking_df_local = analysis_results.get("ranking_df")
+                if ranking_df_local is None:
+                    ranking_df_local = analysis_results.get("ranking")
                 if isinstance(ranking_df_local, pd.DataFrame) and "Wins" in ranking_df_local.columns:
                     # Confirm elements proportionally: top-N elements where N = n_good lines
                     sorted_elems = (ranking_df_local

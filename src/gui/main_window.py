@@ -6,12 +6,21 @@ PyQt6 desktop application with tabbed interface for 5-step analysis pipeline.
 """
 
 import sys
+import os
+import traceback
 from pathlib import Path
+
+# Ensure Matplotlib uses QtAgg backend before any matplotlib figure creation
+try:
+    import matplotlib
+    matplotlib.use("QtAgg")
+except Exception:
+    pass
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QStatusBar, QSplitter, QApplication
+    QPushButton, QLabel, QStatusBar, QSplitter, QApplication, QMessageBox,
 )
 from PyQt6.QtGui import QFont, QIcon, QFontDatabase
 
@@ -23,11 +32,47 @@ from src.gui.step4_widget import Step4Widget
 from src.gui.step5_widget import Step5Widget
 from src.gui.step6_widget import Step6Widget
 from src.gui.summary_widget import SummaryWidget
-from src.gui.gui_utils import NotesPanel, FileHistory
+from src.gui.gui_utils import NotesPanel, FileHistory, get_app_icon, show_about_dialog
 from src.gui.theme import APP_STYLESHEET, LIGHT_STYLESHEET, FONT_FAMILY_UI, FONT_SIZE_BASE
 import src.gui.theme as _theme_module
 
 logger = setup_logger(__name__)
+
+
+def _qt_excepthook(exc_type, exc_value, exc_traceback):
+    """Global unhandled exception hook to log and display crashes."""
+    tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    logger.critical(f"Unhandled exception:\n{tb_str}")
+
+    # Also log to crash.log
+    try:
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            crash_dir = Path(appdata) / "LIBS_Analysis"
+            crash_dir.mkdir(parents=True, exist_ok=True)
+            crash_file = crash_dir / "crash.log"
+        else:
+            crash_file = Path("crash.log")
+        with open(crash_file, "a", encoding="utf-8") as f:
+            f.write(f"\n--- UNHANDLED EXCEPTION ---\n{tb_str}\n")
+    except Exception:
+        pass
+
+    # Show message box if QApplication is alive
+    app = QApplication.instance()
+    if app:
+        try:
+            QMessageBox.critical(
+                None,
+                "Unexpected Error",
+                f"An unexpected error occurred:\n\n{exc_value}\n\n"
+                "The application will attempt to continue, but details have been written to the log.",
+            )
+        except Exception:
+            pass
+
+
+sys.excepthook = _qt_excepthook
 
 
 class SpectralAnalysisApp(QMainWindow):
@@ -46,6 +91,7 @@ class SpectralAnalysisApp(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Spectral Analysis Software  |  5-Step LIBS Pipeline")
+        self.setWindowIcon(get_app_icon())
         self.setGeometry(100, 100, 1440, 900)
         self._dark_mode = True   # start in dark mode
 
@@ -105,6 +151,17 @@ class SpectralAnalysisApp(QMainWindow):
         self.statusBar = QStatusBar()
         self.setStatusBar(self.statusBar)
         self.statusBar.showMessage("Ready")
+
+        # About dialog button
+        self._about_btn = QPushButton("ℹ  About")
+        self._about_btn.setFixedHeight(22)
+        self._about_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: 1px solid #3A4055; "
+            "border-radius: 4px; color: #AEB7C4; font-size: 8pt; padding: 0 10px; }"
+            "QPushButton:hover { border-color: #3FA9F5; color: #3FA9F5; }"
+        )
+        self._about_btn.clicked.connect(lambda: show_about_dialog(self))
+        self.statusBar.addPermanentWidget(self._about_btn)
 
         # Theme toggle button — lives in the right corner of the status bar
         self._theme_btn = QPushButton("☀  Light Mode")
@@ -258,7 +315,17 @@ class SpectralAnalysisApp(QMainWindow):
 
 def main():
     """Launch application."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "jfdtech.libsspectralanalysis.1.1.1"
+            )
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
+    app.setWindowIcon(get_app_icon())
 
     app.setStyleSheet(APP_STYLESHEET)
 

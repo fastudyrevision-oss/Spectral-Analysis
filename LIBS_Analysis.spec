@@ -34,6 +34,8 @@ a = Analysis(
     pathex=['.'],
     binaries=[],
     datas=[
+        ('assets', 'assets'),
+        ('src/assets', 'src/assets'),
         *mpl_datas,
     ],
     hiddenimports=[
@@ -50,37 +52,63 @@ a = Analysis(
         'scipy.signal._peak_finding',
         'scipy.optimize',
         'scipy.interpolate',
+        'scipy.stats',
+        'scipy.special',
+        'scipy.spatial',
         'scipy._lib.messagestream',
-        # matplotlib Qt6 backend
+        # matplotlib Qt6 backend & components
         'matplotlib.backends.backend_qtagg',
         'matplotlib.backends.backend_agg',
+        'matplotlib.figure',
+        'matplotlib.patheffects',
+        'matplotlib.ticker',
+        'matplotlib.font_manager',
         # PyQt6
         'PyQt6.QtCore',
         'PyQt6.QtGui',
         'PyQt6.QtWidgets',
+        'PyQt6.QtSvg',
         'PyQt6.sip',
-        # pandas
+        # pandas & openpyxl (for reading/writing Excel in NIST loader)
         'pandas._libs.tslibs.np_datetime',
         'pandas._libs.tslibs.nattype',
         'pandas._libs.tslibs.timedeltas',
+        'pandas.io.formats.excel',
+        'pandas.io.excel._openpyxl',
+        'openpyxl',
+        'openpyxl.cell._writer',
+        'openpyxl.packaging.manifest',
+        'et_xmlfile',
         # numpy
         'numpy.lib.format',
-        # reportlab (PDF export, optional)
+        # sqlite3
+        'sqlite3',
+        '_sqlite3',
+        # reportlab (PDF export)
         'reportlab',
         'reportlab.platypus',
+        'reportlab.platypus.flowables',
+        'reportlab.platypus.paragraph',
+        'reportlab.platypus.tables',
+        'reportlab.pdfgen.canvas',
         'reportlab.lib',
         'reportlab.lib.styles',
         'reportlab.lib.units',
         'reportlab.lib.colors',
         'reportlab.lib.enums',
+        'reportlab.lib.pagesizes',
+        'reportlab.graphics.shapes',
         # Windows registry (nist_loader uses this to find ProgramData path)
         'winreg',
+        # Standard library modules needed by matplotlib/pyparsing
+        'unittest',
+        *collect_submodules('unittest'),
         # All src submodules
         *collect_submodules('src'),
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['rthook_pyarrow.py'],
     excludes=[
         # Fix AttributeError: module 'pyarrow' has no attribute '__version__'
         'pyarrow',
@@ -105,7 +133,7 @@ a = Analysis(
         'google.colab',
         'tkinter', '_tkinter',
         'PyQt5', 'PySide2', 'PySide6',
-        '_pytest', 'pytest', 'pytest_cov', 'hypothesis', 'unittest',
+        '_pytest', 'pytest', 'pytest_cov', 'hypothesis',
     ],
     noarchive=False,
 )
@@ -122,7 +150,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    icon=None,
+    icon='assets/icon.ico',
 )
 
 coll = COLLECT(

@@ -21,9 +21,15 @@ wheels/
 *.egg
 
 # Virtual Environment
+.venv/
 venv/
 ENV/
 env/
+
+# Build and Installer Output
+installer/
+dist/
+build/
 
 # IDE
 .vscode/

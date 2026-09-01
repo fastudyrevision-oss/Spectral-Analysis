@@ -628,9 +628,12 @@ class Step5Widget(QWidget):
             # ── 1. Registry (installer sets this) ─────────────────────────
             try:
                 import winreg
+                access_mask = winreg.KEY_READ | getattr(winreg, "KEY_WOW64_64KEY", 0)
                 key = winreg.OpenKey(
                     winreg.HKEY_LOCAL_MACHINE,
                     r"Software\JFD Tech\LIBS Spectral Analysis",
+                    0,
+                    access_mask,
                 )
                 path_str, _ = winreg.QueryValueEx(key, "ProcessedDataPath")
                 winreg.CloseKey(key)

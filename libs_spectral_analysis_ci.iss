@@ -51,6 +51,7 @@ DisableProgramGroupPage=yes
 
 OutputDir={#OutputDir}
 OutputBaseFilename=LIBS_Spectral_Analysis_Setup_{#MyAppVersion}
+SetupIconFile=assets\icon.ico
 SolidCompression=yes
 WizardStyle=modern
 
@@ -88,11 +89,11 @@ Source: "{#DistDir}\_internal\Processed Data\*"; \
 
 ; ── [Dirs] ───────────────────────────────────────────────────────────────────
 [Dirs]
-Name: "{commonappdata}\LIBS_Analysis";                                Permissions: everyone-full
-Name: "{commonappdata}\LIBS_Analysis\NIST database";                  Permissions: everyone-full
-Name: "{commonappdata}\LIBS_Analysis\NIST database\Neutral lines";    Permissions: everyone-full
-Name: "{commonappdata}\LIBS_Analysis\NIST database\Ionic lines";      Permissions: everyone-full
-Name: "{commonappdata}\LIBS_Analysis\Processed Data";                 Permissions: everyone-full
+Name: "{commonappdata}\LIBS_Analysis";                                Permissions: users-full everyone-full
+Name: "{commonappdata}\LIBS_Analysis\NIST database";                  Permissions: users-full everyone-full
+Name: "{commonappdata}\LIBS_Analysis\NIST database\Neutral lines";    Permissions: users-full everyone-full
+Name: "{commonappdata}\LIBS_Analysis\NIST database\Ionic lines";      Permissions: users-full everyone-full
+Name: "{commonappdata}\LIBS_Analysis\Processed Data";                 Permissions: users-full everyone-full
 
 ; ── [Registry] ───────────────────────────────────────────────────────────────
 [Registry]
@@ -119,12 +120,14 @@ Root: HKLM; Subkey: "Software\{#MyAppPublisher}\{#MyAppName}"; \
 
 ; ── [Icons] ──────────────────────────────────────────────────────────────────
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
+  WorkingDir: "{app}"
 Name: "{autodesktop}\{#MyAppName}";  Filename: "{app}\{#MyAppExeName}"; \
-  Tasks: desktopicon
+  Tasks: desktopicon; WorkingDir: "{app}"
 
 ; ── [Run] ────────────────────────────────────────────────────────────────────
 [Run]
 Filename: "{app}\{#MyAppExeName}"; \
   Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; \
-  Flags: nowait postinstall skipifsilent
+  Flags: nowait postinstall skipifsilent; \
+  WorkingDir: "{app}"

@@ -62,6 +62,7 @@ DisableProgramGroupPage=yes
 
 OutputDir=C:\Users\User\Desktop
 OutputBaseFilename=LIBS_Spectral_Analysis_Setup
+SetupIconFile=assets\icon.ico
 SolidCompression=yes
 WizardStyle=modern
 
@@ -79,11 +80,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; \
 
 ; ── Application binaries → Program Files (read-only, protected) ──────────────
 ; Copy everything from the PyInstaller dist folder.
-; The NIST database is inside _internal\ in PyInstaller 6.x builds — we
-; exclude it here and install it separately to ProgramData below.
+; The NIST database and Processed Data are inside _internal\ in PyInstaller 6.x builds —
+; we exclude them here and install them separately to ProgramData below.
 Source: "{#DistDir}\*"; \
   DestDir: "{app}"; \
-  Excludes: "_internal\NIST database\*,_internal\NIST database"; \
+  Excludes: "_internal\NIST database\*,_internal\NIST database,_internal\Processed Data\*,_internal\Processed Data"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; ── NIST database → ProgramData (writable by all users) ──────────────────────
@@ -103,26 +104,27 @@ Source: "{#DistDir}\_internal\NIST database\Ionic lines\*"; \
 Source: "{#DistDir}\_internal\Processed Data\*"; \
   DestDir: "{commonappdata}\LIBS_Analysis\Processed Data"; \
   Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
+
 ; ── [Dirs] ───────────────────────────────────────────────────────────────────
 [Dirs]
 
 ; Create the ProgramData root and grant full control to all users so they
 ; can add, modify, and delete element files without needing admin rights.
 Name: "{commonappdata}\LIBS_Analysis"; \
-  Permissions: everyone-full
+  Permissions: users-full everyone-full
 
 Name: "{commonappdata}\LIBS_Analysis\NIST database"; \
-  Permissions: everyone-full
+  Permissions: users-full everyone-full
 
 Name: "{commonappdata}\LIBS_Analysis\NIST database\Neutral lines"; \
-  Permissions: everyone-full
+  Permissions: users-full everyone-full
 
 Name: "{commonappdata}\LIBS_Analysis\NIST database\Ionic lines"; \
-  Permissions: everyone-full
+  Permissions: users-full everyone-full
 
 ; Processed Data folder — writable so users can add/remove pure-element CSVs
 Name: "{commonappdata}\LIBS_Analysis\Processed Data"; \
-  Permissions: everyone-full
+  Permissions: users-full everyone-full
 
 ; ── [Registry] ───────────────────────────────────────────────────────────────
 [Registry]
@@ -153,13 +155,15 @@ Root: HKLM; Subkey: "Software\{#MyAppPublisher}\{#MyAppName}"; \
 
 ; ── [Icons] ──────────────────────────────────────────────────────────────────
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
+  WorkingDir: "{app}"
 Name: "{autodesktop}\{#MyAppName}";  Filename: "{app}\{#MyAppExeName}"; \
-  Tasks: desktopicon
+  Tasks: desktopicon; WorkingDir: "{app}"
 
 ; ── [Run] ────────────────────────────────────────────────────────────────────
 [Run]
 ; Launch after install (optional, user can uncheck)
 Filename: "{app}\{#MyAppExeName}"; \
   Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; \
-  Flags: nowait postinstall skipifsilent
+  Flags: nowait postinstall skipifsilent; \
+  WorkingDir: "{app}"

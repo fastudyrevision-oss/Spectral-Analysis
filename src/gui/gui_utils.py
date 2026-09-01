@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QSlider, QFileDialog, QMessageBox, QProgressDialog, QPushButton, QComboBox,
     QPlainTextEdit, QMenu, QToolButton,
 )
-from PyQt6.QtGui import QFont, QAction
+from PyQt6.QtGui import QFont, QAction, QIcon, QPixmap
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as _NavigationToolbar2QT
 from matplotlib.figure import Figure
@@ -31,6 +31,139 @@ from src.gui.theme import (
 )
 
 logger = setup_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Asset & Icon helpers
+# ---------------------------------------------------------------------------
+
+def get_asset_path(filename: str = "icon.png") -> Path:
+    """
+    Locate an asset file in both development and PyInstaller frozen modes.
+    """
+    candidates = []
+
+    # 1. PyInstaller extraction directory (_MEIPASS)
+    if hasattr(sys, "_MEIPASS"):
+        candidates.append(Path(sys._MEIPASS) / "assets" / filename)
+        candidates.append(Path(sys._MEIPASS) / "src" / "assets" / filename)
+        candidates.append(Path(sys._MEIPASS) / filename)
+
+    # 2. Executable directory (for one-folder PyInstaller)
+    exe_dir = Path(sys.executable).parent
+    candidates.append(exe_dir / "_internal" / "assets" / filename)
+    candidates.append(exe_dir / "_internal" / "src" / "assets" / filename)
+    candidates.append(exe_dir / "assets" / filename)
+    candidates.append(exe_dir / filename)
+
+    # 3. Development tree (relative to source file)
+    current_file = Path(__file__).resolve()
+    # src/gui/gui_utils.py -> src/assets/filename
+    candidates.append(current_file.parent.parent / "assets" / filename)
+    # src/gui/gui_utils.py -> project_root/assets/filename
+    candidates.append(current_file.parent.parent.parent / "assets" / filename)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    # Default fallback
+    return current_file.parent.parent / "assets" / filename
+
+
+def get_app_icon() -> QIcon:
+    """Return the application QIcon loaded from bundled assets."""
+    icon = QIcon()
+    ico_path = get_asset_path("icon.ico")
+    png_path = get_asset_path("icon.png")
+
+    if ico_path.exists():
+        icon.addFile(str(ico_path))
+    if png_path.exists():
+        icon.addFile(str(png_path))
+    return icon
+
+
+def show_about_dialog(parent: QWidget = None) -> None:
+    """Display the modern About dialog with app logo and info."""
+    from PyQt6.QtWidgets import QDialog, QFrame
+
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("About LIBS Spectral Analysis")
+    dialog.setFixedSize(500, 380)
+    dialog.setWindowIcon(get_app_icon())
+
+    layout = QVBoxLayout(dialog)
+    layout.setContentsMargins(24, 24, 24, 20)
+    layout.setSpacing(14)
+
+    # Header with logo
+    header_layout = QHBoxLayout()
+    header_layout.setSpacing(16)
+
+    logo_path = get_asset_path("logo.png")
+    if logo_path.exists():
+        logo_lbl = QLabel()
+        pixmap = QPixmap(str(logo_path)).scaled(
+            75, 75, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        )
+        logo_lbl.setPixmap(pixmap)
+        header_layout.addWidget(logo_lbl)
+
+    title_layout = QVBoxLayout()
+    title_layout.setSpacing(4)
+    title_lbl = QLabel("LIBS Spectral Analysis")
+    title_lbl.setStyleSheet("font-size: 14pt; font-weight: bold; color: #3FA9F5;")
+    version_lbl = QLabel("Version 1.1.1  •  Laser-Induced Breakdown Spectroscopy")
+    version_lbl.setStyleSheet("font-size: 9pt; color: #8F9CAE;")
+    publisher_lbl = QLabel("JFD Tech  |  https://www.jfdtech.info")
+    publisher_lbl.setStyleSheet("font-size: 8.5pt; color: #5C6577;")
+
+    title_layout.addWidget(title_lbl)
+    title_layout.addWidget(version_lbl)
+    title_layout.addWidget(publisher_lbl)
+    header_layout.addLayout(title_layout)
+    header_layout.addStretch()
+
+    layout.addLayout(header_layout)
+
+    # Separator
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setStyleSheet("color: #2D3344;")
+    layout.addWidget(line)
+
+    # Description
+    desc_lbl = QLabel(
+        "Complete 6-step desktop analytical pipeline for LIBS spectra:\n\n"
+        "• ① Baseline Correction (Savitzky-Golay & Asymmetric Least Squares)\n"
+        "• ② Peak Detection (Prominence, Wavelengths, SNR)\n"
+        "• ③ NIST Atomic Spectra Database Matching\n"
+        "• ④ Elemental Preferences & Winner Assignment\n"
+        "• ⑤ Reference Spectra Validation & Correlation\n"
+        "• ⑥ Model Performance Metrics & Multi-Format Reporting"
+    )
+    desc_lbl.setWordWrap(True)
+    desc_lbl.setStyleSheet("font-size: 9pt; line-height: 1.4; color: #C2C9D6;")
+    layout.addWidget(desc_lbl)
+
+    layout.addStretch()
+
+    # Close button
+    btn_layout = QHBoxLayout()
+    btn_layout.addStretch()
+    close_btn = QPushButton("Close")
+    close_btn.setFixedWidth(90)
+    close_btn.setStyleSheet(
+        "QPushButton { background: #1E2333; border: 1px solid #3FA9F5; border-radius: 4px; "
+        "color: #3FA9F5; padding: 6px; font-weight: bold; }"
+        "QPushButton:hover { background: #3FA9F5; color: #0E121E; }"
+    )
+    close_btn.clicked.connect(dialog.accept)
+    btn_layout.addWidget(close_btn)
+    layout.addLayout(btn_layout)
+
+    dialog.exec()
 
 # ---------------------------------------------------------------------------
 # High-DPI save toolbar
