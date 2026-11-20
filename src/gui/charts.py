@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
+from matplotlib.colors import LinearSegmentedColormap, Normalize, TwoSlopeNorm
 
 from src.gui.theme import (
     C_ACCENT, C_ACCENT2, C_BG_CARD, C_BG_DEEP,
@@ -669,12 +670,27 @@ class ChartEngine:
         heatmap_matrix,
         peak_labels: list,
         element_labels: list,
-    ) -> None:
-        """Correlation heatmap: peaks × elements, coolwarm colormap (Step 6 / Figure 12)."""
-        # NOTE: the caller must use fig.clf() + add_subplot() before calling
-        # this method — NOT ax.clear() — so that any colorbar axes added by a
-        # previous render are fully removed from the figure.
+        filter_mode: str = "all",
+    ) -> dict:
+        """Correlation heatmap: peaks × elements with adaptive colormap (Step 6 / Figure 12).
+
+        Parameters
+        ----------
+        ax : Axes
+            Matplotlib Axes to render on.
+        heatmap_matrix : np.ndarray
+            Matrix of validation coefficients (peaks × elements).
+        peak_labels : list[str]
+            Labels for rows (peaks).
+        element_labels : list[str]
+            Labels for columns (elements).
+        filter_mode : str
+            "all" (default): full matrix.
+            "ambiguous" / "ambiguous_only": only show ambiguous peaks (competing elements).
+            "matched" / "matched_only": only show peaks with at least one matched element.
+        """
         fig = ax.get_figure()
+        default_meta = {"n_total": 0, "n_ambiguous": 0, "n_matched": 0, "filter_mode": filter_mode}
         try:
             # Relax guard: require at least 2 rows AND 2 columns with real data
             if (heatmap_matrix is None
@@ -684,71 +700,191 @@ class ChartEngine:
                     or heatmap_matrix.size == 0):
                 ChartEngine._show_placeholder(ax, "Insufficient heatmap data")
                 ChartEngine.apply_dark_style(fig, ax)
-                return
+                return default_meta
 
-            n_rows, n_cols = heatmap_matrix.shape
+            n_orig_rows, n_orig_cols = heatmap_matrix.shape
 
-            # Determine real data range for colour scaling.
-            # Use symmetric range around 0 so negative VC (anti-correlated) shows
-            # as blue, positive as red/warm — more informative than 0→1 clamp.
-            v_abs = np.abs(heatmap_matrix[np.isfinite(heatmap_matrix)])
-            v_max = float(v_abs.max()) if len(v_abs) > 0 else 1.0
-            v_max = max(v_max, 0.01)   # prevent vmin==vmax
+            # Analyze original rows for ambiguity and non-zero matches
+            is_amb = np.zeros(n_orig_rows, dtype=bool)
+            is_matched = np.zeros(n_orig_rows, dtype=bool)
+            for i in range(n_orig_rows):
+                lbl = peak_labels[i] if i < len(peak_labels) else ""
+                row_vals = heatmap_matrix[i]
+                fin_vals = row_vals[np.isfinite(row_vals)]
+                non_zeros = np.sum(np.abs(fin_vals) > 0.005)
+                if "[AMB]" in lbl or non_zeros > 1:
+                    is_amb[i] = True
+                if non_zeros > 0:
+                    is_matched[i] = True
 
-            # Use RdYlGn: red=low/negative, yellow=mid, green=high/confirmed
-            im = ax.imshow(
-                heatmap_matrix,
-                aspect="auto",
-                cmap="RdYlGn",
-                vmin=-v_max,
-                vmax=v_max,
-            )
+            n_amb = int(np.sum(is_amb))
+            n_match = int(np.sum(is_matched))
+            meta = {
+                "n_total": n_orig_rows,
+                "n_ambiguous": n_amb,
+                "n_matched": n_match,
+                "filter_mode": filter_mode,
+            }
 
-            # Colorbar — safe because the caller cleared the whole figure first
+            mat = np.copy(heatmap_matrix)
+            p_labels = list(peak_labels)
+            e_labels = list(element_labels)
+
+            # Apply user filtering if requested
+            if filter_mode in ("ambiguous", "ambiguous_only"):
+                if n_amb > 0:
+                    sel_rows = np.where(is_amb)[0]
+                    mat = mat[sel_rows, :]
+                    p_labels = [p_labels[i] for i in sel_rows]
+                    # Prune element columns with zero correlations in ambiguous subset
+                    col_has_val = np.array([np.any(np.abs(mat[:, j]) > 0.005) for j in range(mat.shape[1])])
+                    if np.sum(col_has_val) >= 2:
+                        sel_cols = np.where(col_has_val)[0]
+                        mat = mat[:, sel_cols]
+                        e_labels = [e_labels[j] for j in sel_cols]
+                    title_text = f"Ambiguous Peaks vs Elements ({n_amb} Conflicting Peaks)"
+                else:
+                    ChartEngine._show_placeholder(
+                        ax, "No ambiguous peaks found\nAll detected peaks were uniquely matched"
+                    )
+                    ChartEngine.apply_dark_style(fig, ax)
+                    return meta
+
+            elif filter_mode in ("matched", "matched_only"):
+                if n_match > 0:
+                    sel_rows = np.where(is_matched)[0]
+                    mat = mat[sel_rows, :]
+                    p_labels = [p_labels[i] for i in sel_rows]
+                    col_has_val = np.array([np.any(np.abs(mat[:, j]) > 0.005) for j in range(mat.shape[1])])
+                    if np.sum(col_has_val) >= 2:
+                        sel_cols = np.where(col_has_val)[0]
+                        mat = mat[:, sel_cols]
+                        e_labels = [e_labels[j] for j in sel_cols]
+                    title_text = f"Matched Peaks vs Elements ({n_match} Peaks)"
+                else:
+                    ChartEngine._show_placeholder(ax, "No matched peaks found")
+                    ChartEngine.apply_dark_style(fig, ax)
+                    return meta
+            else:
+                title_text = "Ambiguous Peaks vs Elements (VC correlation)"
+
+            n_rows, n_cols = mat.shape
+            v_finite = mat[np.isfinite(mat)]
+            v_min = float(v_finite.min()) if len(v_finite) > 0 else 0.0
+            v_max = float(v_finite.max()) if len(v_finite) > 0 else 1.0
+
+            bg_hex = get_chart_axes_bg()
+            dark_mode = is_dark()
+
+            # Build theme-adaptive colormap: 0.0 is mapped to neutral background
+            # rather than a misleading bright yellow
+            if v_min < -0.01:
+                norm_vmin = min(v_min, -0.4)
+                norm_vmax = max(v_max, 1.0)
+                div_colors = [
+                    (0.0, C_ERROR),
+                    (0.48, "#2D1F24" if dark_mode else "#FCE8E6"),
+                    (0.5, bg_hex),
+                    (0.52, "#1E2620" if dark_mode else "#E6F4EA"),
+                    (0.72, C_WARN),
+                    (1.0, C_SUCCESS),
+                ]
+                cmap = LinearSegmentedColormap.from_list("vc_corr_div", div_colors)
+                norm = TwoSlopeNorm(vcenter=0.0, vmin=norm_vmin, vmax=norm_vmax)
+            else:
+                norm_vmax = max(v_max, 1.0)
+                seq_colors = [
+                    (0.0, bg_hex),
+                    (0.12, "#202620" if dark_mode else "#EDF7ED"),
+                    (0.50, C_WARN),
+                    (0.75, C_ACCENT),
+                    (1.0, C_SUCCESS),
+                ]
+                cmap = LinearSegmentedColormap.from_list("vc_corr_seq", seq_colors)
+                norm = Normalize(vmin=0.0, vmax=norm_vmax)
+
+            im = ax.imshow(mat, aspect="auto", cmap=cmap, norm=norm)
+
+            # Colorbar
             cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label("Validation Coefficient (VC)", color=get_chart_text2(), fontsize=10)  # was 8
-            cbar.ax.tick_params(colors=get_chart_text2(), labelsize=9)   # was 7
+            cbar.set_label("Validation Coefficient (VC)", color=get_chart_text2(), fontsize=10)
+            cbar.ax.tick_params(colors=get_chart_text2(), labelsize=9)
             cbar.ax.yaxis.set_tick_params(color=get_chart_text2())
 
-            # Cell annotations
+            # Cell annotations:
+            # For small matrices (n_rows <= 12 and n_cols <= 12 and total <= 50),
+            # annotate all cells (satisfying Property 10).
+            # For dense/large matrices, suppress 0.00 labels to eliminate text noise.
+            is_dense = (n_rows > 12 or n_cols > 12 or n_rows * n_cols > 50)
+            if n_rows > 40:
+                cell_font_size = 6.5
+            elif n_rows > 25:
+                cell_font_size = 7.5
+            elif n_rows > 12:
+                cell_font_size = 8.5
+            else:
+                cell_font_size = 9.0
+
             for i in range(n_rows):
                 for j in range(n_cols):
-                    val = heatmap_matrix[i, j]
+                    val = mat[i, j]
                     if not np.isfinite(val):
-                        label = "—"
-                        text_colour = get_chart_text2()
-                    else:
-                        label = f"{val:.2f}"
-                        text_colour = "#FFFFFF" if val >= 0.5 else "#141519"
-                    ax.text(j, i, label,
-                            ha="center", va="center",
-                            color=text_colour,
-                            fontsize=9, fontweight="bold")  # was 7
+                        if not is_dense:
+                            ax.text(j, i, "—", ha="center", va="center",
+                                    color=get_chart_text2(), fontsize=cell_font_size)
+                        continue
+
+                    if is_dense and abs(val) < 0.005:
+                        continue
+
+                    label = f"{val:.2f}"
+                    text_colour = "#FFFFFF" if val >= 0.5 else C_BG_DEEP
+                    ax.text(
+                        j, i, label,
+                        ha="center", va="center",
+                        color=text_colour,
+                        fontsize=cell_font_size,
+                        fontweight="bold" if val >= 0.5 else "normal",
+                    )
 
             # Axis labels
             ax.set_yticks(range(n_rows))
             truncated_peak = [
-                (lbl[:22] + "…") if len(lbl) > 25 else lbl
-                for lbl in peak_labels
+                (lbl[:24] + "…") if len(lbl) > 27 else lbl
+                for lbl in p_labels
             ]
-            ax.set_yticklabels(truncated_peak, fontsize=9)   # was 7
+            y_font_size = 7.0 if n_rows > 35 else (8.0 if n_rows > 20 else 9.0)
+            ax.set_yticklabels(truncated_peak, fontsize=y_font_size)
+
+            # Highlight ambiguous peaks on Y-axis
+            for t in ax.get_yticklabels():
+                if "[AMB]" in t.get_text():
+                    t.set_color(C_WARN)
+                    t.set_fontweight("bold")
+
             ax.set_xticks(range(n_cols))
-            ax.set_xticklabels(element_labels, fontsize=10, rotation=45, ha="right")  # was 8
-            ax.set_xlabel("Elements", color=get_chart_text2(), fontsize=11)    # was 8
-            ax.set_ylabel("Peaks (wavelength)", color=get_chart_text2(), fontsize=11)  # was 8
-            ax.set_title(
-                "Ambiguous Peaks vs Elements  (VC correlation)",
-                color=get_chart_text(),
-                fontsize=12, fontweight="bold",  # was 10
-            )
+            x_font_size = 8.0 if n_cols > 15 else 9.5
+            ax.set_xticklabels(e_labels, fontsize=x_font_size, rotation=45, ha="right")
+            ax.set_xlabel("Elements", color=get_chart_text2(), fontsize=11)
+            ax.set_ylabel("Peaks (wavelength)", color=get_chart_text2(), fontsize=11)
+            ax.set_title(title_text, color=get_chart_text(), fontsize=12, fontweight="bold")
+
+            # Subtle cell borders
+            ax.set_xticks(np.arange(-0.5, n_cols, 1), minor=True)
+            ax.set_yticks(np.arange(-0.5, n_rows, 1), minor=True)
+            ax.grid(which="minor", color=get_chart_border(), linestyle="-", linewidth=0.5, alpha=0.4)
+            ax.grid(which="major", visible=False)
+            ax.tick_params(which="minor", bottom=False, left=False)
 
             _finish(fig, ax)
+            return meta
 
         except Exception:
             logger.exception("render_correlation_heatmap failed")
             ax.clear()
             ChartEngine._show_placeholder(ax, "Chart unavailable")
             ChartEngine.apply_dark_style(fig, ax)
+            return default_meta
 
     # ------------------------------------------------------------------
     # Step 6 charts

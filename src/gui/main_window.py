@@ -284,35 +284,8 @@ class SpectralAnalysisApp(QMainWindow):
                     f"Restored: {len(peaks)} detected peaks"
                 )
                 # Replot the spectrum + peaks chart if processed data is available
-                pd_data = getattr(self.step2_tab, 'processed_data', None)
-                if pd_data is not None:
-                    import numpy as np
-                    from src.gui.theme import C_ACCENT, C_WARN, get_chart_axes_bg, get_chart_border, get_chart_text2
-                    peak_wl  = np.array([p.wavelength for p in peaks])
-                    peak_int = np.array([p.intensity  for p in peaks])
-                    self.step2_tab.axes.clear()
-                    self.step2_tab.axes.plot(
-                        pd_data.wavelength, pd_data.corrected,
-                        color=C_ACCENT, linewidth=0.9, alpha=0.9, label="Spectrum"
-                    )
-                    self.step2_tab.axes.scatter(
-                        peak_wl, peak_int,
-                        color=C_WARN, s=32, marker="x", linewidths=1.4,
-                        label=f"Peaks ({len(peak_wl)})", zorder=3
-                    )
-                    self.step2_tab.axes.set_xlabel("Wavelength (nm)")
-                    self.step2_tab.axes.set_ylabel("Intensity")
-                    self.step2_tab.axes.set_title("Detected Peaks")
-                    leg = self.step2_tab.axes.legend(
-                        loc="upper right", fontsize=8, framealpha=0.6
-                    )
-                    leg.get_frame().set_facecolor(get_chart_axes_bg())
-                    leg.get_frame().set_edgecolor(get_chart_border())
-                    for txt in leg.get_texts():
-                        txt.set_color(get_chart_text2())
-                    self.step2_tab._style_axes()
-                    self.step2_tab.fig.tight_layout(pad=1.2)
-                    self.step2_tab.canvas.draw()
+                if getattr(self.step2_tab, 'processed_data', None) is not None:
+                    self.step2_tab._update_chart()
                 logger.info("Session restored: %d detected peaks (Step 2)", len(peaks))
         except Exception:
             logger.exception("Session restore failed for Step 2")

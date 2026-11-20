@@ -39,6 +39,7 @@ from src.gui.gui_utils import (
     ParameterControl, WorkerThread, FileHistory,
     show_error, show_info,
     make_table_toolbar, on_copy_table_clicked,
+    PeakHoverAnnotator,
 )
 from src.gui.theme import (
     primary_button_style, secondary_button_style, instruction_banner_style,
@@ -277,11 +278,17 @@ class UPRSAWidget(QWidget):
         # Tab 1: Accepted Spectrum Overview
         tab1, self.fig_overview, self.canvas_overview = self._create_chart_tab()
         self._figures["accepted_overview"] = self.fig_overview
+        self._hover_overview = PeakHoverAnnotator(
+            self.canvas_overview, radius_px=14.0, x_unit="nm", x_name="Wavelength", y_name="Intensity"
+        )
         self.tabs.addTab(tab1, "🌟 Accepted Peaks Spectrum")
 
         # Tab 2: Accepted & Representative Rejected
         tab2, self.fig_comparison, self.canvas_comparison = self._create_chart_tab()
         self._figures["accepted_rejected"] = self.fig_comparison
+        self._hover_comparison = PeakHoverAnnotator(
+            self.canvas_comparison, radius_px=14.0, x_unit="nm", x_name="Wavelength", y_name="Intensity"
+        )
         self.tabs.addTab(tab2, "⚖ Accepted vs Rejected")
 
         # Tab 3: PQI Distribution Histogram
@@ -292,6 +299,9 @@ class UPRSAWidget(QWidget):
         # Tab 4: Quality Space Map (SNR vs Prominence)
         tab4, self.fig_map, self.canvas_map = self._create_chart_tab()
         self._figures["quality_map"] = self.fig_map
+        self._hover_map = PeakHoverAnnotator(
+            self.canvas_map, radius_px=14.0, x_unit="", y_unit="", x_name="Local SNR", y_name="Norm Prom"
+        )
         self.tabs.addTab(tab4, "🗺 Quality Map")
 
         # Tab 5: Representative Line Profiles (3 subplots)
@@ -582,6 +592,13 @@ class UPRSAWidget(QWidget):
 
     def _show_placeholders(self) -> None:
         """Display clean themed placeholder on all 5 diagnostic figure canvases."""
+        if hasattr(self, "_hover_overview"):
+            self._hover_overview.detach()
+        if hasattr(self, "_hover_comparison"):
+            self._hover_comparison.detach()
+        if hasattr(self, "_hover_map"):
+            self._hover_map.detach()
+
         chart_bg = get_chart_bg()
         items = [
             (self.fig_overview, self.canvas_overview, "No data — run UPRSA analysis"),
@@ -643,6 +660,13 @@ class UPRSAWidget(QWidget):
             fig.patch.set_facecolor(chart_bg)
             canvas.setStyleSheet(f"background-color: {chart_bg};")
 
+        if hasattr(self, "_hover_overview"):
+            self._hover_overview.update_theme()
+        if hasattr(self, "_hover_comparison"):
+            self._hover_comparison.update_theme()
+        if hasattr(self, "_hover_map"):
+            self._hover_map.update_theme()
+
         if self.uprsa_result is not None and self._step1_data is not None:
             self._render_charts()
         else:
@@ -691,6 +715,11 @@ class UPRSAWidget(QWidget):
         ax1.legend(loc="upper right")
         _style_legend(ax1)
         ChartEngine.apply_dark_style(self.fig_overview, ax1)
+        if len(df_acc) > 0:
+            extra_acc = [f"PQI: {r['PQI']:.3f} | SNR: {r['SNR']:.1f}" for _, r in df_acc.iterrows()]
+            self._hover_overview.attach(ax1, df_acc["Wavelength"].to_numpy(), df_acc["Intensity"].to_numpy(), extra_info=extra_acc)
+        else:
+            self._hover_overview.detach()
         self.canvas_overview.draw()
 
         # ── 2. Accepted & Representative Rejected ─────────────────────────
@@ -715,6 +744,21 @@ class UPRSAWidget(QWidget):
         ax2.legend(loc="upper right")
         _style_legend(ax2)
         ChartEngine.apply_dark_style(self.fig_comparison, ax2)
+        all_wl = []
+        all_int = []
+        all_extra = []
+        if len(df_acc) > 0:
+            all_wl.extend(df_acc["Wavelength"].tolist())
+            all_int.extend(df_acc["Intensity"].tolist())
+            all_extra.extend([f"Decision: Accepted | PQI: {r['PQI']:.3f}" for _, r in df_acc.iterrows()])
+        if len(df_rej) > 0:
+            all_wl.extend(rej_sample["Wavelength"].tolist())
+            all_int.extend(rej_sample["Intensity"].tolist())
+            all_extra.extend([f"Decision: Rejected | PQI: {r['PQI']:.3f}" for _, r in rej_sample.iterrows()])
+        if all_wl:
+            self._hover_comparison.attach(ax2, np.array(all_wl), np.array(all_int), extra_info=all_extra)
+        else:
+            self._hover_comparison.detach()
         self.canvas_comparison.draw()
 
         # ── 3. PQI Histogram ──────────────────────────────────────────────
@@ -751,6 +795,21 @@ class UPRSAWidget(QWidget):
         ax4.legend(loc="upper right")
         _style_legend(ax4)
         ChartEngine.apply_dark_style(self.fig_map, ax4)
+        map_x = []
+        map_y = []
+        map_extra = []
+        if len(df_acc) > 0:
+            map_x.extend(df_acc["SNR"].tolist())
+            map_y.extend(df_acc["Prominence_Normalized"].tolist())
+            map_extra.extend([f"Status: Accepted | λ: {r['Wavelength']:.2f} nm | PQI: {r['PQI']:.3f}" for _, r in df_acc.iterrows()])
+        if len(df_rej) > 0:
+            map_x.extend(df_rej["SNR"].tolist())
+            map_y.extend(df_rej["Prominence_Normalized"].tolist())
+            map_extra.extend([f"Status: Rejected | λ: {r['Wavelength']:.2f} nm | PQI: {r['PQI']:.3f}" for _, r in df_rej.iterrows()])
+        if map_x:
+            self._hover_map.attach(ax4, np.array(map_x), np.array(map_y), extra_info=map_extra)
+        else:
+            self._hover_map.detach()
         self.canvas_map.draw()
 
         # ── 5. Representative Line Profiles ───────────────────────────────

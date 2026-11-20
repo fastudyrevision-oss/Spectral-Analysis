@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QSplitter,
     QScrollArea, QTabWidget, QProgressBar, QFileDialog, QApplication,
-    QStyledItemDelegate, QStyleOptionViewItem,
+    QStyledItemDelegate, QStyleOptionViewItem, QComboBox,
 )
 from PyQt6.QtGui import QFont, QColor, QPainter, QPalette
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -269,7 +269,7 @@ class Step6Widget(QWidget):
         self.canvas12 = FigureCanvasQTAgg(self.fig12)
         self.canvas12.setStyleSheet(f"background-color: {chart_bg};")
         self.toolbar12 = NavigationToolbar2QT(self.canvas12)
-        tab12 = self._wrap_canvas(self.canvas12, self.toolbar12)
+        tab12 = self._create_heatmap_tab(chart_bg)
         self.chart_tabs.addTab(tab12, "Heatmap")
 
         # Fig 14: Performance Metrics (dual Y-axis)
@@ -302,6 +302,57 @@ class Step6Widget(QWidget):
         cl.addWidget(canvas)
         cl.addWidget(toolbar)
         return container
+
+    def _create_heatmap_tab(self, chart_bg: str) -> QWidget:
+        """Create the Heatmap tab with view filter controls (Ambiguous / Matched / All)."""
+        container = QWidget()
+        cl = QVBoxLayout(container)
+        cl.setContentsMargins(6, 6, 6, 4)
+        cl.setSpacing(4)
+
+        ctrl_bar = QHBoxLayout()
+        ctrl_bar.setContentsMargins(4, 2, 4, 4)
+        ctrl_bar.setSpacing(8)
+
+        lbl = QLabel("Filter:")
+        lbl.setStyleSheet(f"color: {C_TEXT2}; font-size: 11px; font-weight: bold;")
+        ctrl_bar.addWidget(lbl)
+
+        self.heatmap_filter_combo = QComboBox()
+        self.heatmap_filter_combo.addItem("⚡ Ambiguous Peaks Only", "ambiguous")
+        self.heatmap_filter_combo.addItem("✓ Matched Peaks Only", "matched")
+        self.heatmap_filter_combo.addItem("🔍 All Peaks", "all")
+        self.heatmap_filter_combo.setToolTip("Filter heatmap: focus on conflicting peaks, non-zero matches, or full matrix")
+        self.heatmap_filter_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {C_BG_RAISED};
+                color: {C_TEXT};
+                border: 1px solid {C_BORDER};
+                border-radius: 4px;
+                padding: 3px 8px;
+                font-size: 11px;
+                min-width: 170px;
+            }}
+            QComboBox:hover {{
+                border-color: {C_ACCENT};
+            }}
+        """)
+        self.heatmap_filter_combo.currentIndexChanged.connect(self._on_heatmap_filter_changed)
+        ctrl_bar.addWidget(self.heatmap_filter_combo)
+
+        self.heatmap_info_label = QLabel("")
+        self.heatmap_info_label.setStyleSheet(f"color: {C_TEXT_MUTED}; font-size: 11px;")
+        ctrl_bar.addWidget(self.heatmap_info_label)
+
+        ctrl_bar.addStretch()
+        cl.addLayout(ctrl_bar)
+        cl.addWidget(self.canvas12)
+        cl.addWidget(self.toolbar12)
+        return container
+
+    def _on_heatmap_filter_changed(self) -> None:
+        """Slot called when user changes heatmap view filter."""
+        self._update_chart_fig12()
 
     def _create_summary_table(self) -> QWidget:
         """Create the summary table tab content: toolbar + themed QTableWidget.
@@ -532,6 +583,8 @@ QPushButton:disabled {{
         ChartEngine._show_placeholder(self.ax12, "No data — click Compute Metrics")
         ChartEngine.apply_dark_style(self.fig12, self.ax12)
         self.canvas12.draw()
+        if hasattr(self, "heatmap_info_label"):
+            self.heatmap_info_label.setText("")
 
         # Also clear the secondary axis on fig14
         self.ax14_2.clear()
@@ -680,9 +733,26 @@ QPushButton:disabled {{
             matrix = self.performance_results.get("heatmap_matrix")
             peak_labels = self.performance_results.get("peak_labels", [])
             element_labels = self.performance_results.get("element_labels", [])
-        ChartEngine.render_correlation_heatmap(
-            self.ax12, matrix, peak_labels, element_labels
+
+        filter_mode = "ambiguous"
+        if hasattr(self, "heatmap_filter_combo"):
+            filter_mode = self.heatmap_filter_combo.currentData() or "ambiguous"
+
+        meta = ChartEngine.render_correlation_heatmap(
+            self.ax12, matrix, peak_labels, element_labels, filter_mode=filter_mode
         )
+
+        if hasattr(self, "heatmap_info_label") and meta:
+            n_amb = meta.get("n_ambiguous", 0)
+            n_matched = meta.get("n_matched", 0)
+            n_total = meta.get("n_total", 0)
+            if n_total > 0:
+                self.heatmap_info_label.setText(
+                    f"Ambiguous: {n_amb}  |  Matched: {n_matched}  |  Total Detected: {n_total}"
+                )
+            else:
+                self.heatmap_info_label.setText("")
+
         self.canvas12.draw()
 
     def _update_chart_fig14(self) -> None:

@@ -712,12 +712,14 @@ class PeakHoverAnnotator:
         canvas: FigureCanvas,
         radius_px: float = 14.0,
         x_unit: str = "nm",
+        y_unit: str = "",
         x_name: str = "Wavelength",
         y_name: str = "Intensity",
     ):
         self.canvas = canvas
         self.radius_px = radius_px
         self.x_unit = x_unit
+        self.y_unit = y_unit
         self.x_name = x_name
         self.y_name = y_name
 
@@ -814,9 +816,19 @@ class PeakHoverAnnotator:
         self._extra_info = None
         self._current_idx = None
         if self._annot is not None:
-            self._annot.set_visible(False)
+            try:
+                self._annot.set_visible(False)
+            except Exception:
+                pass
         if self._highlight is not None:
-            self._highlight.set_visible(False)
+            try:
+                self._highlight.set_visible(False)
+            except Exception:
+                pass
+
+    def detach(self) -> None:
+        """Alias for clear()."""
+        self.clear()
 
     def _on_motion(self, event) -> None:
         if (
@@ -868,10 +880,11 @@ class PeakHoverAnnotator:
 
         extra = f"\n{self._extra_info[idx]}" if self._extra_info and idx < len(self._extra_info) else ""
         unit_str = f" {self.x_unit}" if self.x_unit else ""
+        y_unit_str = f" {self.y_unit}" if self.y_unit else ""
         text = (
             f"({x_val:.2f}, {y_val:.2f})\n"
             f"{self.x_name}: {x_val:.2f}{unit_str}\n"
-            f"{self.y_name}: {y_val:.2f}{extra}"
+            f"{self.y_name}: {y_val:.2f}{y_unit_str}{extra}"
         )
 
         self._annot.xy = (x_val, y_val)

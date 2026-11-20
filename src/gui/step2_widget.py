@@ -536,6 +536,42 @@ class Step2Widget(QWidget):
             self.result_ready.emit(self.detected_peaks)
         
         self.process_button.setEnabled(True)
+
+    def _update_chart(self):
+        """Render detected peaks on top of processed spectrum and wire hover inspection."""
+        if not self.detected_peaks or not hasattr(self, 'processed_data') or self.processed_data is None:
+            return
+
+        peak_wl = np.array([p.wavelength for p in self.detected_peaks])
+        peak_int = np.array([p.intensity for p in self.detected_peaks])
+
+        self.axes.clear()
+        self.axes.plot(
+            self.processed_data.wavelength,
+            self.processed_data.corrected,
+            color=C_ACCENT, linewidth=0.9, alpha=0.9,
+            label="Spectrum"
+        )
+        self.axes.scatter(
+            peak_wl, peak_int,
+            color=C_WARN, s=32, marker="x", linewidths=1.4,
+            label=f"Peaks ({len(peak_wl)})", zorder=3
+        )
+        self.axes.set_xlabel("Wavelength (nm)")
+        self.axes.set_ylabel("Intensity")
+        self.axes.set_title("Detected Peaks")
+        leg = self.axes.legend(loc="upper right", fontsize=10, framealpha=0.6)
+        leg.get_frame().set_facecolor(get_chart_axes_bg())
+        leg.get_frame().set_edgecolor(get_chart_border())
+        for txt in leg.get_texts():
+            txt.set_color(get_chart_text2())
+        self._style_axes()
+
+        # Connect peak hover inspection
+        self._hover_annotator.attach(self.axes, peak_wl, peak_int)
+
+        self.fig.tight_layout(pad=1.2)
+        self.canvas.draw()
     
     def _on_reset_params(self):
         """Reset all detection parameters to their default values."""
