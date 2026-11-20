@@ -1,2 +1,66 @@
-Wavelength_nm,Validation_Coefficient,Status
-456.0,0.017170435431397697,Success
+Wavelength_nm,Element,Reference_File,Validation_Coefficient,Peak_Shift_nm,Tier,Status
+553.55,Ba,Ba.csv,0.8527502940749463,0.0,High,Success
+659.53,Ba,Ba.csv,0.5373763645735472,0.1,Low,Success
+614.17,Ba,Ba.csv,0.2799887424168193,0.04000000000000001,Low,Success
+585.74,Ca,Ca.csv,0.9512721892881608,-0.05,High,Success
+616.22,Ca,Ca.csv,0.9757029171845849,-0.1,High,Success
+646.26,Ca,Ca.csv,0.9624642000501135,0.01999999999999999,High,Success
+600.59,Ce I,N/A,,0.0,Missing Ref,Missing reference spectrum for Ce I
+356.94,Co I,N/A,,0.0,Missing Ref,Missing reference spectrum for Co I
+520.84,Cr,Cr.csv,0.6620072817174579,-0.1,Medium,Success
+503.9,Cu,Cu.csv,0.01138746562826238,-0.1,Low,Success
+506.55,Cu,Cu.csv,0.9893024244782944,-0.010000000000000009,High,Success
+644.17,Cu,Cu.csv,0.9647097916924717,-0.03,High,Success
+308.37,Fe,SG_ALS_LIBS_processed (Fe).csv,0.03896825510909919,-0.09000000000000001,Low,Success
+318.02,Fe,SG_ALS_LIBS_processed (Fe).csv,0.1458131462300865,-0.04000000000000001,Low,Success
+340.75,Fe,SG_ALS_LIBS_processed (Fe).csv,-0.22007241070027939,-0.1,Poor,Success
+342.71,Fe,SG_ALS_LIBS_processed (Fe).csv,0.4683663903900419,0.009999999999999995,Low,Success
+347.54,Fe,SG_ALS_LIBS_processed (Fe).csv,0.970483335443511,-0.010000000000000009,High,Success
+349.06,Fe,SG_ALS_LIBS_processed (Fe).csv,0.7941432358522973,0.01999999999999999,Medium,Success
+349.78,Fe,SG_ALS_LIBS_processed (Fe).csv,0.0629503600954029,-0.05,Low,Success
+373.53,Fe,SG_ALS_LIBS_processed (Fe).csv,0.9565851525461896,0.01999999999999999,High,Success
+374.95,Fe,SG_ALS_LIBS_processed (Fe).csv,0.979432972631685,0.009999999999999995,High,Success
+381.58,Fe,SG_ALS_LIBS_processed (Fe).csv,0.9554516736126706,0.0,High,Success
+404.58,Fe,SG_ALS_LIBS_processed (Fe).csv,0.9370183644795553,0.01999999999999999,High,Success
+425.01,Fe,SG_ALS_LIBS_processed (Fe).csv,0.5852955173430133,-0.1,Low,Success
+432.58,Fe,SG_ALS_LIBS_processed (Fe).csv,0.9872547569189158,0.04000000000000001,High,Success
+440.48,Fe,SG_ALS_LIBS_processed (Fe).csv,0.9933803311487536,0.03,High,Success
+449.46,Fe,SG_ALS_LIBS_processed (Fe).csv,0.9006624465948823,0.009999999999999995,High,Success
+487.21,Fe,SG_ALS_LIBS_processed (Fe).csv,-0.056200485433578584,0.0,Poor,Success
+495.76,Fe,SG_ALS_LIBS_processed (Fe).csv,0.9688950291604748,-0.020000000000000004,High,Success
+527.04,Fe,SG_ALS_LIBS_processed (Fe).csv,0.9656243365382811,0.01999999999999999,High,Success
+532.8,Fe,SG_ALS_LIBS_processed (Fe).csv,0.6206130439573013,0.1,Medium,Success
+624.63,Fe,SG_ALS_LIBS_processed (Fe).csv,0.44780064689054205,-0.1,Low,Success
+640.0,Fe,SG_ALS_LIBS_processed (Fe).csv,0.17701402242720118,0.1,Low,Success
+649.65,Fe,SG_ALS_LIBS_processed (Fe).csv,0.9600088701153768,-0.07,High,Success
+751.1,Fe,SG_ALS_LIBS_processed (Fe).csv,0.12149490637364471,-0.04000000000000001,Low,Success
+238.44,Fe,SG_ALS_LIBS_processed (Fe).csv,0.8616885819057916,-0.020000000000000004,High,Success
+249.33,Fe,SG_ALS_LIBS_processed (Fe).csv,0.7318882381121651,-0.09000000000000001,Medium,Success
+503.57,Fe,SG_ALS_LIBS_processed (Fe).csv,0.2023498527248836,0.1,Low,Success
+610.35,Li,Li.csv,0.8364201984147596,-0.08,High,Success
+530.23,Nd II,N/A,,0.0,Missing Ref,Missing reference spectrum for Nd II
+777.19,O,N/A,,0.0,Missing Ref,Missing reference spectrum for O
+602.42,P II,N/A,,0.0,Missing Ref,Missing reference spectrum for P II
+780.03,Rb I,N/A,,0.0,Missing Ref,Missing reference spectrum for Rb I
+542.87,S II,N/A,,0.0,Missing Ref,Missing reference spectrum for S II
+558.88,Sn II,N/A,,0.0,Missing Ref,Missing reference spectrum for Sn II
+334.94,Ti,Ti_I.csv,,0.0,Failed,Failed: Insufficient data points (1) for 334.94 nm
+336.12,Ti,Ti_I.csv,,0.0,Failed,Failed: Insufficient data points (1) for 336.12 nm
+338.38,Ti,Ti_I.csv,,0.0,Failed,Failed: Insufficient data points (0) for 338.38 nm
+388.66,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+396.36,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+406.39,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+413.2,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+422.66,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+427.15,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+435.29,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+445.2,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+448.0,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+501.46,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+551.12,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+623.08,V I,N/A,,0.0,Missing Ref,Missing reference spectrum for V I
+272.86,V II,N/A,,0.0,Missing Ref,Missing reference spectrum for V II
+279.7,V II,N/A,,0.0,Missing Ref,Missing reference spectrum for V II
+302.26,V II,N/A,,0.0,Missing Ref,Missing reference spectrum for V II
+309.31,V II,N/A,,0.0,Missing Ref,Missing reference spectrum for V II
+576.32,V II,N/A,,0.0,Missing Ref,Missing reference spectrum for V II

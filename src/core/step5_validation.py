@@ -11,6 +11,7 @@ import pandas as pd
 from typing import List, Dict, Tuple, Optional
 from scipy.interpolate import interp1d
 from pathlib import Path
+import re
 
 from src import (
     STEP5_PARAMS, setup_logger,
@@ -19,6 +20,27 @@ from src import (
 
 
 logger = setup_logger(__name__)
+
+
+def extract_element_symbol(name_or_filename: str) -> str:
+    """
+    Extract standard elemental symbol from a filename or element string.
+    
+    Examples:
+        'Al.csv' -> 'Al'
+        'Fe-Cl2.csv' -> 'Fe'
+        'SG_ALS_LIBS_processed (Fe).csv' -> 'Fe'
+        'Mn_I.csv' -> 'Mn'
+        'Ca II' -> 'Ca'
+    """
+    base = Path(str(name_or_filename)).stem.strip()
+    bracket_match = re.search(r'\(([A-Z][a-z]?)\)', base)
+    if bracket_match:
+        return bracket_match.group(1)
+    prefix_match = re.match(r'^([A-Z][a-z]?)', base)
+    if prefix_match:
+        return prefix_match.group(1)
+    return base
 
 
 class ValidationAnalyzer:
@@ -276,7 +298,9 @@ class ValidationAnalyzer:
     
     def validate_line(self, processed: pd.DataFrame,
                      reference: pd.DataFrame,
-                     line_wavelength: float) -> Dict:
+                     line_wavelength: float,
+                     align_lag: bool = False,
+                     max_lag: float = 0.10) -> Dict:
         """
         Validate a single spectral line.
         
@@ -288,12 +312,17 @@ class ValidationAnalyzer:
             Reference spectrum
         line_wavelength : float
             Target line wavelength (nm)
+        align_lag : bool, default False
+            If True, searches for peak shift within [-max_lag, max_lag] that maximizes VC.
+        max_lag : float, default 0.10
+            Maximum alignment search range (nm).
         
         Returns
         -------
         Dict with keys:
             - 'wavelength': line wavelength
             - 'validation_coefficient': correlation coefficient
+            - 'peak_shift_nm': detected wavelength shift (nm)
             - 'processed_intensity': processed spectrum intensities
             - 'reference_intensity': reference spectrum intensities
             - 'processed_wl': processed spectrum wavelengths
@@ -321,16 +350,38 @@ class ValidationAnalyzer:
             p_int_norm = p_int / np.max(np.abs(p_int)) if np.max(np.abs(p_int)) > 0 else p_int
             r_int_norm = r_int_interp / np.max(np.abs(r_int_interp)) if np.max(np.abs(r_int_interp)) > 0 else r_int_interp
             
-            # Calculate correlation
+            # Calculate base correlation
             vc = self.validation_coefficient(p_int_norm, r_int_norm)
+            best_vc = vc
+            best_shift = 0.0
+            best_r_norm = r_int_norm
+
+            # Optional peak alignment search across ±max_lag
+            if align_lag and max_lag > 0 and len(p_wl) > 1:
+                shifts = np.linspace(-max_lag, max_lag, 21)
+                for s in shifts:
+                    if s == 0.0:
+                        continue
+                    try:
+                        shifted_p_wl = p_wl + s
+                        shifted_r_int = interp_func(shifted_p_wl)
+                        shifted_r_norm = shifted_r_int / np.max(np.abs(shifted_r_int)) if np.max(np.abs(shifted_r_int)) > 0 else shifted_r_int
+                        c = self.validation_coefficient(p_int_norm, shifted_r_norm)
+                        if not np.isnan(c) and (np.isnan(best_vc) or c > best_vc):
+                            best_vc = c
+                            best_shift = float(s)
+                            best_r_norm = shifted_r_norm
+                    except Exception:
+                        pass
             
-            logger.info(f"Validated line {line_wavelength} nm: VC = {vc:.4f}")
+            logger.info(f"Validated line {line_wavelength} nm: VC = {best_vc:.4f} (shift={best_shift:+.3f} nm)")
             
             return {
                 'wavelength': line_wavelength,
-                'validation_coefficient': vc,
+                'validation_coefficient': best_vc,
+                'peak_shift_nm': best_shift,
                 'processed_intensity': p_int_norm,
-                'reference_intensity': r_int_norm,
+                'reference_intensity': best_r_norm,
                 'processed_wl': p_wl,
                 'reference_wl': r_wl,
                 'normalized': True
@@ -341,12 +392,15 @@ class ValidationAnalyzer:
             return {
                 'wavelength': line_wavelength,
                 'validation_coefficient': np.nan,
+                'peak_shift_nm': 0.0,
                 'error': str(e)
             }
     
     def validate_spectrum(self, processed: pd.DataFrame,
                          reference: pd.DataFrame,
-                         target_lines: List[float]) -> pd.DataFrame:
+                         target_lines: List[float],
+                         align_lag: bool = False,
+                         max_lag: float = 0.10) -> pd.DataFrame:
         """
         Validate processed spectrum against reference for multiple lines.
         
@@ -358,6 +412,10 @@ class ValidationAnalyzer:
             Reference spectrum
         target_lines : List[float]
             List of line wavelengths (nm) to validate
+        align_lag : bool, default False
+            Whether to optimize for minor peak wavelength shifts (±max_lag).
+        max_lag : float, default 0.10
+            Maximum alignment search window (nm).
         
         Returns
         -------
@@ -379,10 +437,11 @@ class ValidationAnalyzer:
         # Process each line
         results = []
         for line_wl in target_lines:
-            result = self.validate_line(processed, reference, line_wl)
+            result = self.validate_line(processed, reference, line_wl, align_lag=align_lag, max_lag=max_lag)
             results.append({
                 'Wavelength_nm': result['wavelength'],
                 'Validation_Coefficient': result.get('validation_coefficient', np.nan),
+                'Peak_Shift_nm': result.get('peak_shift_nm', 0.0),
                 'Status': 'Success' if 'error' not in result else f"Failed: {result['error']}"
             })
         
@@ -400,6 +459,196 @@ class ValidationAnalyzer:
             logger.info(f"  Max VC: {valid_vc.max():.4f}")
         
         return results_df
+    
+    def validate_element_spectra(
+        self,
+        processed: pd.DataFrame,
+        element_reference_dict: Dict[str, pd.DataFrame],
+        element_lines_dict: Dict[str, List[float]],
+        reference_filenames: Optional[Dict[str, str]] = None,
+        align_lag: bool = False,
+        max_lag: float = 0.10
+    ) -> Tuple[pd.DataFrame, List[Dict]]:
+        """
+        Validate spectral lines against element-matched pure reference spectra.
+        Each element's lines are validated ONLY against that element's reference file,
+        preventing cross-element spectrum concatenation artifacts.
+
+        Parameters
+        ----------
+        processed : pd.DataFrame
+            Processed spectrum.
+        element_reference_dict : Dict[str, pd.DataFrame]
+            Dictionary mapping element symbol (or name) to pure reference spectrum DataFrame.
+        element_lines_dict : Dict[str, List[float]]
+            Dictionary mapping element symbol (or name) to list of target line wavelengths (nm).
+        reference_filenames : Dict[str, str], optional
+            Optional mapping of element symbol to original reference filename.
+        align_lag : bool, default False
+            Whether to optimize for minor peak wavelength shifts (±max_lag).
+        max_lag : float, default 0.10
+            Maximum alignment lag search window (nm).
+
+        Returns
+        -------
+        Tuple[pd.DataFrame, List[Dict]]
+            - results_df: DataFrame with columns:
+                ['Wavelength_nm', 'Element', 'Reference_File', 'Validation_Coefficient', 'Peak_Shift_nm', 'Tier', 'Status']
+            - line_details: List of per-line detail dictionaries with overlay arrays.
+        """
+        proc_norm = self.normalize_spectrum_columns(processed)
+        ref_filenames = reference_filenames or {}
+
+        # Normalize reference DataFrames and index by multiple key variations
+        norm_ref = {}
+        for key, ref_df in element_reference_dict.items():
+            if ref_df is None or ref_df.empty:
+                continue
+            try:
+                ndf = self.normalize_spectrum_columns(ref_df)
+                sym = extract_element_symbol(key)
+                fname = ref_filenames.get(key, ref_filenames.get(sym, Path(str(key)).name if '.' in str(key) else f"{sym}.csv"))
+                norm_ref[sym] = (ndf, fname, sym)
+                norm_ref[sym.upper()] = (ndf, fname, sym)
+                norm_ref[key] = (ndf, fname, sym)
+                norm_ref[key.lower()] = (ndf, fname, sym)
+            except Exception as e:
+                logger.warning(f"Could not normalize reference spectrum for {key}: {e}")
+
+        results = []
+        line_details = []
+
+        def _classify_tier(vc_val: float) -> str:
+            if np.isnan(vc_val):
+                return "Failed"
+            if vc_val >= 0.80:
+                return "High"
+            if vc_val >= 0.60:
+                return "Medium"
+            if vc_val >= 0.0:
+                return "Low"
+            return "Poor"
+
+        for elem_key, lines in element_lines_dict.items():
+            elem_clean = str(elem_key).strip() if elem_key is not None else ""
+            sym = extract_element_symbol(elem_clean) if elem_clean else ""
+
+            # Check if reference exists for this element
+            ref_entry = norm_ref.get(elem_clean) or norm_ref.get(sym) or norm_ref.get(sym.upper())
+
+            if ref_entry is not None:
+                ref_df_norm, fname, resolved_sym = ref_entry
+                for wl in lines:
+                    res = self.validate_line(proc_norm, ref_df_norm, wl, align_lag=align_lag, max_lag=max_lag)
+                    vc = res.get('validation_coefficient', np.nan)
+                    shift = res.get('peak_shift_nm', 0.0)
+                    tier = _classify_tier(vc)
+                    status = "Success" if 'error' not in res and not np.isnan(vc) else f"Failed: {res.get('error', 'Low correlation')}"
+                    
+                    res_copy = dict(res)
+                    res_copy['element'] = resolved_sym
+                    res_copy['reference_file'] = fname
+                    res_copy['tier'] = tier
+                    line_details.append(res_copy)
+
+                    results.append({
+                        'Wavelength_nm': wl,
+                        'Element': resolved_sym,
+                        'Reference_File': fname,
+                        'Validation_Coefficient': vc,
+                        'Peak_Shift_nm': shift,
+                        'Tier': tier,
+                        'Status': status,
+                    })
+            else:
+                # No direct element match: check if element is unassigned / unknown
+                if elem_clean in ["", "Unassigned", "Unknown", "None", None] and norm_ref:
+                    # Multi-reference auto attribution: find best match among available references
+                    for wl in lines:
+                        best_vc = -999.0
+                        best_res = None
+                        best_sym = "Unknown"
+                        best_fname = "N/A"
+                        # Evaluate against unique references
+                        seen_syms = set()
+                        for s, (r_df, fn, r_sym) in norm_ref.items():
+                            if r_sym in seen_syms:
+                                continue
+                            seen_syms.add(r_sym)
+                            try:
+                                candidate = self.validate_line(proc_norm, r_df, wl, align_lag=align_lag, max_lag=max_lag)
+                                c = candidate.get('validation_coefficient', np.nan)
+                                if not np.isnan(c) and c > best_vc:
+                                    best_vc = c
+                                    best_res = candidate
+                                    best_sym = r_sym
+                                    best_fname = fn
+                            except Exception:
+                                pass
+                        
+                        if best_res is not None and best_vc > -999.0:
+                            tier = _classify_tier(best_vc)
+                            res_copy = dict(best_res)
+                            res_copy['element'] = best_sym
+                            res_copy['reference_file'] = best_fname
+                            res_copy['tier'] = tier
+                            line_details.append(res_copy)
+                            results.append({
+                                'Wavelength_nm': wl,
+                                'Element': best_sym,
+                                'Reference_File': best_fname,
+                                'Validation_Coefficient': best_vc,
+                                'Peak_Shift_nm': best_res.get('peak_shift_nm', 0.0),
+                                'Tier': tier,
+                                'Status': "Success (Auto-attributed)",
+                            })
+                        else:
+                            line_details.append({
+                                'wavelength': wl,
+                                'element': 'Unknown',
+                                'reference_file': 'N/A',
+                                'validation_coefficient': np.nan,
+                                'peak_shift_nm': 0.0,
+                                'error': 'No reference coverage for line',
+                            })
+                            results.append({
+                                'Wavelength_nm': wl,
+                                'Element': 'Unknown',
+                                'Reference_File': 'N/A',
+                                'Validation_Coefficient': np.nan,
+                                'Peak_Shift_nm': 0.0,
+                                'Tier': 'No Coverage',
+                                'Status': 'No reference coverage',
+                            })
+                else:
+                    # Missing reference spectrum for this explicit element
+                    disp_elem = elem_clean if elem_clean else "Unknown"
+                    for wl in lines:
+                        line_details.append({
+                            'wavelength': wl,
+                            'element': disp_elem,
+                            'reference_file': 'N/A',
+                            'validation_coefficient': np.nan,
+                            'peak_shift_nm': 0.0,
+                            'error': f"Missing reference spectrum for element {disp_elem}",
+                        })
+                        results.append({
+                            'Wavelength_nm': wl,
+                            'Element': disp_elem,
+                            'Reference_File': 'N/A',
+                            'Validation_Coefficient': np.nan,
+                            'Peak_Shift_nm': 0.0,
+                            'Tier': 'Missing Ref',
+                            'Status': f"Missing reference spectrum for {disp_elem}",
+                        })
+
+        results_df = pd.DataFrame(results)
+        if results_df.empty:
+            results_df = pd.DataFrame(columns=[
+                'Wavelength_nm', 'Element', 'Reference_File',
+                'Validation_Coefficient', 'Peak_Shift_nm', 'Tier', 'Status'
+            ])
+        return results_df, line_details
     
     def validate_batch(self, processed: pd.DataFrame,
                       reference_dict: Dict[str, pd.DataFrame],

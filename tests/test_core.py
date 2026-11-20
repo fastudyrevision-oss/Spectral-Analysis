@@ -643,3 +643,88 @@ class TestStep5Validation:
         assert len(results) == len(target_lines)
         assert 'Wavelength_nm' in results.columns
         assert 'Validation_Coefficient' in results.columns
+
+    def test_extract_element_symbol(self):
+        """Test extraction of elemental symbols from filenames and labels."""
+        from src.core.step5_validation import extract_element_symbol
+        assert extract_element_symbol("Al.csv") == "Al"
+        assert extract_element_symbol("Ca.csv") == "Ca"
+        assert extract_element_symbol("SG_ALS_LIBS_processed (Fe).csv") == "Fe"
+        assert extract_element_symbol("Mn_I.csv") == "Mn"
+        assert extract_element_symbol("Ti_I") == "Ti"
+        assert extract_element_symbol("Ca II") == "Ca"
+        assert extract_element_symbol("Fe-Cl2.csv") == "Fe"
+
+    def test_validate_line_with_align_lag(self):
+        """Test validation with peak alignment lag search."""
+        wl = np.linspace(399.0, 401.0, 201)  # step 0.01 nm
+        # Processed peak centered at 400.04 nm (shifted by +0.04 nm)
+        proc_int = 100.0 * np.exp(-0.5 * ((wl - 400.04) / 0.05)**2)
+        # Reference peak centered at 400.00 nm
+        ref_int = 100.0 * np.exp(-0.5 * ((wl - 400.00) / 0.05)**2)
+        
+        proc_df = pd.DataFrame({'wavelength': wl, 'intensity': proc_int})
+        ref_df = pd.DataFrame({'wavelength': wl, 'intensity': ref_int})
+        
+        analyzer = ValidationAnalyzer({'WINDOW': 0.3, 'MIN_POINTS': 5})
+        
+        # Without alignment
+        res_no_align = analyzer.validate_line(proc_df, ref_df, 400.0, align_lag=False)
+        # With alignment (search up to 0.10 nm)
+        res_align = analyzer.validate_line(proc_df, ref_df, 400.0, align_lag=True, max_lag=0.10)
+        
+        assert res_align['validation_coefficient'] > res_no_align['validation_coefficient']
+        assert abs(res_align['peak_shift_nm'] - (-0.04)) < 0.02
+        assert res_align['validation_coefficient'] > 0.95
+
+    def test_validate_element_spectra_multi_file(self):
+        """Test element-aware validation separating reference spectra per element."""
+        wl = np.linspace(390.0, 430.0, 4001)
+        # Processed has Al line at 396.15 and Ca line at 422.67
+        proc_int = (
+            50.0 * np.exp(-0.5 * ((wl - 396.15) / 0.05)**2) +
+            80.0 * np.exp(-0.5 * ((wl - 422.67) / 0.05)**2)
+        )
+        proc_df = pd.DataFrame({'wavelength': wl, 'intensity': proc_int})
+        
+        # Pure Al reference has only 396.15
+        al_ref = pd.DataFrame({
+            'wavelength': wl,
+            'intensity': 100.0 * np.exp(-0.5 * ((wl - 396.15) / 0.05)**2)
+        })
+        # Pure Ca reference has only 422.67
+        ca_ref = pd.DataFrame({
+            'wavelength': wl,
+            'intensity': 100.0 * np.exp(-0.5 * ((wl - 422.67) / 0.05)**2)
+        })
+        
+        analyzer = ValidationAnalyzer({'WINDOW': 0.3, 'MIN_POINTS': 5})
+        elem_ref_dict = {'Al': al_ref, 'Ca': ca_ref}
+        elem_lines_dict = {'Al': [396.15], 'Ca': [422.67], 'Fe': [404.58]}  # Fe is missing ref
+        ref_filenames = {'Al': 'Al.csv', 'Ca': 'Ca.csv'}
+        
+        results_df, details = analyzer.validate_element_spectra(
+            proc_df, elem_ref_dict, elem_lines_dict, reference_filenames=ref_filenames
+        )
+        
+        assert len(results_df) == 3
+        assert 'Element' in results_df.columns
+        assert 'Reference_File' in results_df.columns
+        assert 'Tier' in results_df.columns
+        
+        al_row = results_df[results_df['Element'] == 'Al'].iloc[0]
+        assert al_row['Reference_File'] == 'Al.csv'
+        assert al_row['Validation_Coefficient'] > 0.90
+        assert al_row['Tier'] == 'High'
+        assert al_row['Status'] == 'Success'
+        
+        ca_row = results_df[results_df['Element'] == 'Ca'].iloc[0]
+        assert ca_row['Reference_File'] == 'Ca.csv'
+        assert ca_row['Validation_Coefficient'] > 0.90
+        assert ca_row['Tier'] == 'High'
+        assert ca_row['Status'] == 'Success'
+        
+        fe_row = results_df[results_df['Element'] == 'Fe'].iloc[0]
+        assert fe_row['Reference_File'] == 'N/A'
+        assert np.isnan(fe_row['Validation_Coefficient'])
+        assert fe_row['Tier'] == 'Missing Ref'

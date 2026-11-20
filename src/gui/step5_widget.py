@@ -23,12 +23,14 @@ from matplotlib.figure import Figure
 
 from src import setup_logger
 from src.config import STEP5_PARAMS
-from src.core.step5_validation import ValidationAnalyzer
+from src.core.step5_validation import ValidationAnalyzer, extract_element_symbol
 from src.io.file_reader import CSVReader
 from src.gui.gui_utils import (
     HighDpiToolbar as NavigationToolbar2QT,
+    style_toolbar,
     FileSelector, WorkerThread, FileHistory, RecentFilesButton,
-    show_error, show_info
+    show_error, show_info,
+    make_table_toolbar, on_copy_table_clicked, ForegroundDelegate,
 )
 from src.gui.charts import ChartEngine
 from src.gui.export_engine import export_step5_csv, export_step5_png, generate_pdf_report
@@ -64,6 +66,8 @@ class Step5Widget(QWidget):
         self.file_history = file_history
         self.notes_panel = notes_panel
         self.target_wavelengths = []
+        self._step4_element_lines: dict[str, list[float]] = {}
+        self._step4_element_map: dict[float, str] = {}
         # Overlay pagination state
         self._overlay_page = 0
         self._overlay_page_size = 4   # 2×2 grid — larger, more readable charts
@@ -578,23 +582,48 @@ class Step5Widget(QWidget):
 
         # Tab 3: Results table
         self.results_table = self._create_results_table()
-        self.chart_tabs.addTab(self.results_table, "📋 Results Table")
+        _res_container, self._results_copy_btn, self._results_row_label = \
+            make_table_toolbar(self.results_table, row_label_text="— rows")
+        self._results_copy_btn.clicked.connect(
+            lambda: on_copy_table_clicked(
+                self.results_table, self._results_copy_btn, self._results_row_label
+            )
+        )
+        self.chart_tabs.addTab(_res_container, "📋 Results Table")
 
         layout.addWidget(self.chart_tabs)
+        self._show_placeholders()
         return panel
 
     def _create_results_table(self) -> QTableWidget:
         t = QTableWidget()
-        t.setColumnCount(4)
+        t.setColumnCount(6)
         t.setHorizontalHeaderLabels(
-            ["Wavelength (nm)", "Validation Coefficient", "Status", "Quality"])
+            ["Wavelength (nm)", "Element", "Reference File", "Validation Coefficient", "Tier", "Status"])
         t.setSortingEnabled(True)
         t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # Ensure the Tier column's per-item foreground colour is always
+        # painted, even when the global stylesheet would otherwise override it.
+        t.setItemDelegateForColumn(4, ForegroundDelegate(t))
         return t
 
     # ──────────────────────────────────────────────────────────────────────
     # Theme
     # ──────────────────────────────────────────────────────────────────────
+
+    def _show_placeholders(self):
+        chart_bg = get_chart_bg()
+        for fig, canvas, msg in [
+            (self.vc_fig, self.vc_canvas, "No data — run Validation"),
+            (self.overlay_fig, self.overlay_canvas, "No data — run Validation"),
+        ]:
+            fig.clear()
+            fig.patch.set_facecolor(chart_bg)
+            canvas.setStyleSheet(f"background-color: {chart_bg};")
+            ax = fig.add_subplot(111)
+            ChartEngine._show_placeholder(ax, msg)
+            ChartEngine.apply_dark_style(fig, ax)
+            canvas.draw()
 
     def apply_theme(self):
         """Update chart backgrounds when the global theme changes."""
@@ -604,10 +633,21 @@ class Step5Widget(QWidget):
                              (self.overlay_fig, self.overlay_canvas)]:
             fig.patch.set_facecolor(chart_bg)
             canvas.setStyleSheet(f"background-color: {chart_bg};")
-            canvas.draw()
+
         self._title_label.setStyleSheet(step_title_font(13))
         self._instructions_label.setStyleSheet(instruction_banner_style())
         self.summary_banner.setStyleSheet(summary_banner_style())
+        style_toolbar(self.vc_toolbar)
+        style_toolbar(self.overlay_toolbar)
+
+        # Re-populate the results table and redraw charts for the new theme
+        if self.validation_results is not None:
+            self._populate_results_table()
+            self._update_chart()
+            self._redraw_overlay_page()
+        else:
+            self._show_placeholders()
+            self.results_table.viewport().update()
 
     # ──────────────────────────────────────────────────────────────────────
     # Processed Data folder helpers
@@ -891,6 +931,8 @@ class Step5Widget(QWidget):
                 with open(filepath, 'r') as f:
                     wavelengths = [float(l.strip()) for l in f if l.strip()]
             self.target_wavelengths = list(wavelengths)
+            self._step4_element_lines = {}
+            self._step4_element_map = {}
 
             # Update labels
             name = Path(filepath).name
@@ -920,6 +962,8 @@ class Step5Widget(QWidget):
             try:
                 self.target_wavelengths = [
                     float(l.strip()) for l in text.split('\n') if l.strip()]
+                self._step4_element_lines = {}
+                self._step4_element_map = {}
                 self.wavelengths_label.setText(
                     f"✅ {len(self.target_wavelengths)} wavelengths entered manually")
                 self._wl_path_label.setText("(entered manually)")
@@ -933,6 +977,8 @@ class Step5Widget(QWidget):
     def _on_clear_wavelengths(self):
         """Clear all target wavelengths and reset the wavelength UI labels."""
         self.target_wavelengths = []
+        self._step4_element_lines = {}
+        self._step4_element_map = {}
         self.wavelengths_label.setText("No wavelengths specified")
         self._wl_path_label.setText("(No file loaded)")
         self._wl_path_label.setStyleSheet(
@@ -997,17 +1043,21 @@ class Step5Widget(QWidget):
                     processed = pd.read_csv(str(self._processed_path))
                 except Exception:
                     processed = pd.read_csv(str(self._processed_path), sep=None, engine='python')
-            # Merge all selected reference files into one DataFrame
-            ref_frames = []
+            # Load selected reference files into per-element dictionary
+            elem_ref_dict = {}
+            ref_filenames = {}
             for rp in getattr(self, "_active_ref_paths", []):
                 try:
-                    ref_frames.append(pd.read_csv(rp))
+                    p = Path(rp)
+                    elem_sym = extract_element_symbol(p.name)
+                    df_r = pd.read_csv(rp)
+                    elem_ref_dict[elem_sym] = df_r
+                    ref_filenames[elem_sym] = p.name
                 except Exception as e:
                     logger.warning(f"Could not read reference file {rp}: {e}")
-            if not ref_frames:
+            if not elem_ref_dict:
                 raise ValueError("No reference files could be loaded.")
-            # Concatenate then deduplicate on wavelength column (keep first)
-            reference = pd.concat(ref_frames, ignore_index=True)
+
             params = {
                 'WINDOW': self.window_spinbox.value(),
                 'MIN_POINTS': self.min_points_spinbox.value(),
@@ -1016,24 +1066,28 @@ class Step5Widget(QWidget):
             }
             analyzer = ValidationAnalyzer(params)
 
-            # Normalize columns once (same as validate_spectrum does internally)
-            proc_norm = analyzer.normalize_spectrum_columns(processed)
-            ref_norm  = analyzer.normalize_spectrum_columns(reference)
+            # Prepare element to lines mapping
+            element_lines_dict = {}
+            step4_lines = getattr(self, "_step4_element_lines", None)
+            if step4_lines:
+                element_lines_dict = dict(step4_lines)
+            else:
+                elem_map = getattr(self, "_step4_element_map", {})
+                for wl in self.target_wavelengths:
+                    elem = elem_map.get(round(wl, 2), "")
+                    element_lines_dict.setdefault(elem, []).append(wl)
 
-            # Run per-line validation and collect overlay data
-            results_rows = []
-            self.line_overlays = []
-            for wl in self.target_wavelengths:
-                line_result = analyzer.validate_line(proc_norm, ref_norm, wl)
-                self.line_overlays.append(line_result)
-                results_rows.append({
-                    'Wavelength_nm': line_result['wavelength'],
-                    'Validation_Coefficient': line_result.get('validation_coefficient', np.nan),
-                    'Status': 'Success' if 'error' not in line_result
-                              else f"Failed: {line_result['error']}",
-                })
+            results_df, line_details = analyzer.validate_element_spectra(
+                processed=processed,
+                element_reference_dict=elem_ref_dict,
+                element_lines_dict=element_lines_dict,
+                reference_filenames=ref_filenames,
+                align_lag=True,
+                max_lag=0.10,
+            )
 
-            self.validation_results = pd.DataFrame(results_rows)
+            self.validation_results = results_df
+            self.line_overlays = line_details
             try:
                 from src.gui.session_manager import save_step5
                 save_step5(self.validation_results)
@@ -1100,15 +1154,27 @@ class Step5Widget(QWidget):
         self.results_table.setRowCount(len(df))
         for row, (_, r) in enumerate(df.iterrows()):
             self.results_table.setItem(row, 0, QTableWidgetItem(f"{r['Wavelength_nm']:.2f}"))
+            self.results_table.setItem(row, 1, QTableWidgetItem(str(r.get('Element', '—'))))
+            self.results_table.setItem(row, 2, QTableWidgetItem(str(r.get('Reference_File', '—'))))
             vc_val = r['Validation_Coefficient']
-            self.results_table.setItem(row, 1, QTableWidgetItem(
+            self.results_table.setItem(row, 3, QTableWidgetItem(
                 "N/A" if pd.isna(vc_val) else f"{vc_val:.4f}"))
-            self.results_table.setItem(row, 2, QTableWidgetItem(r['Status']))
-            tier_label, bg_hex, fg_hex = ChartEngine.classify_vc(vc_val)
+            tier_val = r.get('Tier')
+            if not tier_val or pd.isna(tier_val):
+                tier_label, bg_hex, fg_hex = ChartEngine.classify_vc(vc_val)
+            else:
+                tier_label = str(tier_val)
+                _, bg_hex, fg_hex = ChartEngine.classify_vc(vc_val)
             quality_item = QTableWidgetItem(tier_label)
             quality_item.setBackground(QColor(bg_hex))
             quality_item.setForeground(QColor(fg_hex))
-            self.results_table.setItem(row, 3, quality_item)
+            self.results_table.setItem(row, 4, quality_item)
+            self.results_table.setItem(row, 5, QTableWidgetItem(str(r.get('Status', ''))))
+        n = len(df)
+        self._results_row_label.setText(f"{n} row{'s' if n != 1 else ''}")
+        self._results_copy_btn.setEnabled(n > 0)
+        self._results_copy_btn.setChecked(False)
+        self._results_copy_btn.setText("⎘  Copy")
         logger.info("Results table populated")
 
     def _update_chart(self):
@@ -1154,8 +1220,8 @@ class Step5Widget(QWidget):
     def _redraw_overlay_page(self):
         """Render the current page of the filtered overlay grid (2×2 max)."""
         from src.gui.theme import (
-            C_ACCENT, C_ACCENT2, C_BG_BASE, C_BG_RAISED,
-            C_BORDER_SUBTLE, C_TEXT2,
+            C_ACCENT, C_ACCENT2,
+            get_chart_bg, get_chart_axes_bg, get_chart_border, get_chart_text2,
         )
 
         self.overlay_fig.clear()
@@ -1177,6 +1243,7 @@ class Step5Widget(QWidget):
             ax = self.overlay_fig.add_subplot(111)
             ChartEngine._show_placeholder(ax, "No lines match the selected filters")
             ChartEngine.apply_dark_style(self.overlay_fig, ax)
+            self.overlay_fig.patch.set_facecolor(get_chart_bg())
             self.overlay_canvas.draw()
             return
 
@@ -1196,39 +1263,43 @@ class Step5Widget(QWidget):
             ref    = line_data['reference_intensity']
             vc     = line_data.get('validation_coefficient', float('nan'))
             center = line_data['wavelength']
+            elem   = line_data.get('element', '')
+            ref_f  = line_data.get('reference_file', '')
             tier_label, tier_colour, _ = ChartEngine.classify_vc(vc)
 
+            ref_legend = f"Ref ({ref_f})" if ref_f and ref_f != 'N/A' else "Reference"
             ax.plot(wl, proc, color=C_ACCENT,  linewidth=1.5, alpha=0.9,
                     label="Processed")
             ax.plot(wl, ref,  color=C_ACCENT2, linewidth=1.5, alpha=0.9,
-                    linestyle="--", label="Reference")
+                    linestyle="--", label=ref_legend)
 
             import math as _math
             vc_str = f"{vc:.3f}" if not _math.isnan(vc) else "N/A"
-            ax.set_title(f"{center:.1f} nm  VC={vc_str}  [{tier_label}]",
-                         fontsize=9.5, color=tier_colour, pad=4,
+            elem_tag = f" [{elem}]" if elem and elem != 'Unknown' else ""
+            ax.set_title(f"{center:.2f} nm{elem_tag}  VC={vc_str}  [{tier_label}]",
+                         fontsize=11, color=tier_colour, pad=4,      # was 9.5
                          fontweight="bold")
-            ax.set_xlabel("Wavelength (nm)", fontsize=8.5, color=C_TEXT2)
-            ax.set_ylabel("Norm. Intensity", fontsize=8.5, color=C_TEXT2)
+            ax.set_xlabel("Wavelength (nm)", fontsize=11, color=get_chart_text2())  # was 8.5
+            ax.set_ylabel("Norm. Intensity", fontsize=11, color=get_chart_text2())  # was 8.5
 
-            ax.set_facecolor(C_BG_RAISED)
-            ax.tick_params(colors=C_TEXT2, which="both", labelsize=8)
+            ax.set_facecolor(get_chart_axes_bg())
+            ax.tick_params(colors=get_chart_text2(), which="both", labelsize=10)    # was 8
             for spine in ax.spines.values():
-                spine.set_edgecolor(C_BORDER_SUBTLE); spine.set_linewidth(0.7)
-            ax.grid(True, color=C_BORDER_SUBTLE, alpha=0.45,
+                spine.set_edgecolor(get_chart_border()); spine.set_linewidth(0.7)
+            ax.grid(True, color=get_chart_border(), alpha=0.45,
                     linewidth=0.5, linestyle="--")
 
-            leg = ax.legend(fontsize=8, framealpha=0.6, loc="upper right")
-            leg.get_frame().set_facecolor(C_BG_RAISED)
-            leg.get_frame().set_edgecolor(C_BORDER_SUBTLE)
+            leg = ax.legend(fontsize=10, framealpha=0.6, loc="upper right")  # was 8
+            leg.get_frame().set_facecolor(get_chart_axes_bg())
+            leg.get_frame().set_edgecolor(get_chart_border())
             for t in leg.get_texts():
-                t.set_color(C_TEXT2)
+                t.set_color(get_chart_text2())
 
         # Hide unused axes in the 2×2 grid
         for idx in range(n, nrows * ncols):
             axes[idx // ncols][idx % ncols].set_visible(False)
 
-        self.overlay_fig.patch.set_facecolor(C_BG_BASE)
+        self.overlay_fig.patch.set_facecolor(get_chart_bg())
         try:
             self.overlay_fig.tight_layout(pad=1.2, h_pad=2.0, w_pad=1.2)
         except Exception:
@@ -1258,8 +1329,11 @@ class Step5Widget(QWidget):
             count = tier_counts.get(label, 0)
             if count > 0:
                 tier_parts.append(f"{label}: {count}")
+        elements = [str(e) for e in validation_results['Element'].dropna().unique() if str(e) not in ['N/A', 'Unknown', '']] if 'Element' in validation_results.columns else []
+        elem_suffix = f"  |  Elements: {len(elements)} ({', '.join(elements)})" if elements else ""
         self.summary_banner.setText(
-            f"Mean VC: {mean_vc:.4f}  |  Total wavelengths: {total_count}  |  "
+            f"Mean VC: {mean_vc:.4f}  |  Total: {total_count}"
+            + elem_suffix + "  |  "
             + " | ".join(tier_parts))
         _, colour, _ = ChartEngine.classify_vc(mean_vc)
         self.mean_vc_label.setStyleSheet(mean_vc_label_style(colour))
@@ -1367,21 +1441,74 @@ class Step5Widget(QWidget):
 
     def load_from_step4(self, analysis_results: dict) -> None:
         """
-        Receive Step 4 analysis results (primary element hint).
-
-        Currently used only to pre-populate the status label with the
-        identified primary element — no hard dependency on this data for
-        validation to proceed.
+        Receive Step 4 analysis results and auto-configure Step 5:
+        - Extracts winner lines mapped to each winning element.
+        - Automatically checks the matching pure-element reference files.
+        - Prepares element-specific validation mappings.
         """
         if not analysis_results:
             return
-        primary = analysis_results.get("primary_element", "")
-        if primary:
-            self.summary_banner.setText(
-                f"Primary element from Step 4: <b>{primary}</b> — "
-                "ready for validation."
+
+        winners_df = analysis_results.get("winner_lines")
+        element_lines: dict[str, list[float]] = {}
+        element_map: dict[float, str] = {}
+        target_wls: list[float] = []
+
+        if winners_df is not None and isinstance(winners_df, pd.DataFrame) and not winners_df.empty:
+            for _, row in winners_df.iterrows():
+                elem = str(row.get('Winning_Element', '')).strip()
+                wl = row.get('Observed_Wavelength', row.get('NIST_Matched_Wavelength', None))
+                if wl is not None and not pd.isna(wl):
+                    wl_float = float(wl)
+                    element_lines.setdefault(elem, []).append(wl_float)
+                    element_map[round(wl_float, 2)] = elem
+                    target_wls.append(wl_float)
+
+        self._step4_element_lines = element_lines
+        self._step4_element_map = element_map
+
+        if target_wls:
+            self.target_wavelengths = sorted(target_wls)
+            self.wavelengths_label.setText(
+                f"✅ {len(self.target_wavelengths)} lines across {len(element_lines)} elements"
             )
-        logger.info("Step 5: received Step 4 primary element hint: %s", primary)
+            self._wl_path_label.setText("← loaded from Step 4 (Elemental Preferences)")
+            self._wl_path_label.setStyleSheet(
+                f"font-size: 9pt; font-weight: 600; color: {C_ACCENT2}; "
+                f"border: 1px solid #3A4055; border-radius: 4px; padding: 3px 6px;"
+            )
+
+            # Auto-check matching reference files in Processed Data list
+            matched_count = 0
+            for i in range(self._ref_file_list.count()):
+                item = self._ref_file_list.item(i)
+                item_sym = extract_element_symbol(item.text())
+                if item_sym in element_lines:
+                    item.setCheckState(Qt.CheckState.Checked)
+                    matched_count += 1
+                else:
+                    item.setCheckState(Qt.CheckState.Unchecked)
+
+            self._update_ref_sel_summary()
+
+            elems_str = ", ".join(sorted(element_lines.keys()))
+            self.summary_banner.setText(
+                f"Loaded <b>{len(self.target_wavelengths)}</b> lines for: <b>{elems_str}</b> — "
+                f"{matched_count} reference files matched."
+            )
+            self.info_label.setText(
+                f"✅ {len(self.target_wavelengths)} lines loaded from Step 4.\n"
+                f"{matched_count} reference files auto-selected. Click 'Validate Spectrum'."
+            )
+            logger.info("Step 5: loaded %d lines across %d elements from Step 4",
+                        len(self.target_wavelengths), len(element_lines))
+        else:
+            primary = analysis_results.get("primary_element", "")
+            if primary:
+                self.summary_banner.setText(
+                    f"Primary element from Step 4: <b>{primary}</b> — ready for validation."
+                )
+            logger.info("Step 5: received Step 4 primary element hint: %s", primary)
 
     def _on_save_clicked(self):
         if self.validation_results is None:
@@ -1395,7 +1522,7 @@ class Step5Widget(QWidget):
             "CSV Files (*.csv)")
         if filepath:
             try:
-                self.validation_results.to_csv(filepath, index=False)
+                self.validation_results.to_csv(filepath, index=False, lineterminator='\n')
                 show_info("Success", f"Report saved to:\n{filepath}")
             except Exception as e:
                 logger.error(f"Failed to save report: {e}")

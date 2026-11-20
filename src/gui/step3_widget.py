@@ -41,8 +41,10 @@ from src.io.file_writer import CSVWriter
 from src.io.data_models import NISTMatch
 from src.gui.gui_utils import (
     HighDpiToolbar as NavigationToolbar2QT,
+    style_toolbar,
     ParameterControl, WorkerThread, FileHistory, RecentFilesButton,
     show_error, show_info,
+    make_table_toolbar, on_copy_table_clicked,
 )
 from src.gui.charts import ChartEngine
 from src.gui.theme import (
@@ -279,7 +281,7 @@ class Step3Widget(QWidget):
             "3. Optionally add custom CSV/XLSX files.\n"
             "4. Set Tolerance and Min Score.\n"
             "5. Click 'Match Peaks'.\n"
-            "6. Save results for Step 4."
+            "6. Matches are automatically forwarded to Step 4 in-memory (exporting CSV is optional)."
         )
         instructions.setWordWrap(True)
         instructions.setStyleSheet(instruction_banner_style())
@@ -597,16 +599,32 @@ class Step3Widget(QWidget):
         sl.addWidget(self.score_canvas); sl.addWidget(self.score_toolbar)
         self.chart_tabs.addTab(score_w, "Match Score Scatter")
 
+        self._show_placeholders()
+
         # Tab 3 — Results Table
         table_tab = QWidget()
         ttl = QVBoxLayout(table_tab)
         ttl.setContentsMargins(4, 2, 4, 4); ttl.setSpacing(4)
+
+        # Filter checkbox row
+        filter_row = QHBoxLayout()
         self.matched_only_cb = QCheckBox("Show matched peaks only")
         self.matched_only_cb.setChecked(False)
         self.matched_only_cb.toggled.connect(self._on_filter_toggled)
-        ttl.addWidget(self.matched_only_cb)
+        filter_row.addWidget(self.matched_only_cb)
+        filter_row.addStretch()
+        ttl.addLayout(filter_row)
+
+        # Table with copy toolbar
         self.table = self._create_results_table()
-        ttl.addWidget(self.table)
+        _tbl_container, self._table_copy_btn, self._table_row_label = \
+            make_table_toolbar(self.table, row_label_text="— rows")
+        self._table_copy_btn.clicked.connect(
+            lambda: on_copy_table_clicked(
+                self.table, self._table_copy_btn, self._table_row_label
+            )
+        )
+        ttl.addWidget(_tbl_container)
         self.chart_tabs.addTab(table_tab, "📋 Results Table")
 
         layout.addWidget(self.chart_tabs)
@@ -914,6 +932,20 @@ class Step3Widget(QWidget):
 
     # ── Theme ─────────────────────────────────────────────────────────────────
 
+    def _show_placeholders(self):
+        chart_bg = get_chart_bg()
+        for fig, canvas, msg in [
+            (self.freq_fig, self.freq_canvas, "No data — run Element Identification"),
+            (self.score_fig, self.score_canvas, "No data — run Element Identification"),
+        ]:
+            fig.clear()
+            fig.patch.set_facecolor(chart_bg)
+            canvas.setStyleSheet(f"background-color: {chart_bg};")
+            ax = fig.add_subplot(111)
+            ChartEngine._show_placeholder(ax, msg)
+            ChartEngine.apply_dark_style(fig, ax)
+            canvas.draw()
+
     def apply_theme(self):
         from src.gui.theme import step_title_font, instruction_banner_style
         chart_bg = get_chart_bg()
@@ -921,9 +953,14 @@ class Step3Widget(QWidget):
                              (self.score_fig, self.score_canvas)]:
             fig.patch.set_facecolor(chart_bg)
             canvas.setStyleSheet(f"background-color: {chart_bg};")
-            canvas.draw()
+        if self.matches:
+            self._update_charts()
+        else:
+            self._show_placeholders()
         self._title_label.setStyleSheet(step_title_font(13))
         self._instructions_label.setStyleSheet(instruction_banner_style())
+        style_toolbar(self.freq_toolbar)
+        style_toolbar(self.score_toolbar)
 
     # ── Matching ──────────────────────────────────────────────────────────────
 
@@ -946,6 +983,10 @@ class Step3Widget(QWidget):
         self.matches = None
         self.matcher = None
         self.table.setRowCount(0)
+        self._table_row_label.setText("— rows")
+        self._table_copy_btn.setEnabled(False)
+        self._table_copy_btn.setChecked(False)
+        self._table_copy_btn.setText("⎘  Copy")
         self.matched_only_cb.setChecked(False)
         self.save_button.setEnabled(False)
 
@@ -953,16 +994,7 @@ class Step3Widget(QWidget):
         self._update_selected_elements()
 
         # ── Charts ────────────────────────────────────────────────────────
-        chart_bg = get_chart_bg()
-        for fig, canvas in [(self.freq_fig, self.freq_canvas),
-                            (self.score_fig, self.score_canvas)]:
-            fig.clear()
-            ax = fig.add_subplot(111)
-            ax.set_facecolor(chart_bg)
-            ax.text(0.5, 0.5, "No data", transform=ax.transAxes,
-                    ha="center", va="center", color="grey", fontsize=10)
-            ax.axis("off")
-            canvas.draw()
+        self._show_placeholders()
 
         # ── Status ────────────────────────────────────────────────────────
         self.info_label.setText("Reset complete — select elements and match peaks.")
@@ -1162,6 +1194,12 @@ class Step3Widget(QWidget):
             self.table.setItem(i, 6, QTableWidgetItem(
                 f"{m.score:.2e}" if m.score else "—"))
 
+        n = len(rows)
+        self._table_row_label.setText(f"{n} row{'s' if n != 1 else ''}")
+        self._table_copy_btn.setEnabled(n > 0)
+        self._table_copy_btn.setChecked(False)
+        self._table_copy_btn.setText("⎘  Copy")
+
     def _on_filter_toggled(self):
         self._update_table()
 
@@ -1198,9 +1236,13 @@ class Step3Widget(QWidget):
         filename = f"LIBS_matching_results_{ts}.csv"
         filepath = str(Path(save_dir) / filename)
 
+        # Respect the "Show matched peaks only" toggle when exporting
+        matched_only = self.matched_only_cb.isChecked()
+        data_to_save = [m for m in self.matches if not matched_only or m.element]
+
         try:
             writer = CSVWriter()
-            writer.write_nist_matches(filepath, self.matches)
+            writer.write_nist_matches(filepath, data_to_save)
             logger.info(f"Saved matching results to {filepath}")
             show_info("Saved", f"Results saved to:\n{save_dir}\n\n  {filename}")
         except Exception as exc:

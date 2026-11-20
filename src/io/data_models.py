@@ -47,3 +47,44 @@ class NISTMatch:
     relative_intensity: float
     score: float
     element: Optional[str]
+
+
+@dataclass
+class UPRSAPeak:
+    """A single evaluated unassigned peak from UPRSA."""
+    peak_id: int
+    wavelength: float
+    intensity: float
+    local_background: float
+    local_noise: float
+    signal: float
+    snr: float
+    prominence: float
+    spectrum_peak_wavelength: float
+    local_points: int
+    intensity_normalized: float
+    snr_normalized: float
+    prominence_normalized: float
+    pqi: float
+    decision: str                     # "Accepted" | "Rejected"
+    interpretation: str               # e.g. "Suitable for secondary elemental identification"
+
+
+@dataclass
+class UPRSAResult:
+    """Aggregated output from UPRSA analysis."""
+    detected_count: int
+    confirmed_count: int
+    unassigned_count: int
+    accepted_count: int
+    rejected_count: int
+    accepted_percentage: float
+    rejected_percentage: float
+    all_peaks: List[UPRSAPeak] = field(default_factory=list)
+    accepted_peaks: List[UPRSAPeak] = field(default_factory=list)
+    rejected_peaks: List[UPRSAPeak] = field(default_factory=list)
+    df_all: Optional[object] = None       # pd.DataFrame
+    df_accepted: Optional[object] = None  # pd.DataFrame
+    df_rejected: Optional[object] = None  # pd.DataFrame
+    df_summary: Optional[object] = None   # pd.DataFrame
+

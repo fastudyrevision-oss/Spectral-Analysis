@@ -25,6 +25,8 @@ from src.gui.theme import (
     C_BORDER, C_ERROR, C_SUCCESS, C_TEXT, C_TEXT2, C_WARN,
     C_BG_RAISED, C_BG_BASE, C_BORDER_SUBTLE,
     get_chart_bg, get_chart_axes_bg, get_chart_text, get_chart_text2, get_chart_border,
+    is_dark,
+    L_SUCCESS, L_ACCENT, L_WARN, L_ERROR, L_BG_RAISED, L_TEXT2,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,7 +85,23 @@ def _element_colours(elements: list[str]) -> dict[str, str]:
     return result
 
 
-def _style_legend(ax: Axes) -> None:
+def _compute_legend_layout(n_items: int) -> tuple[int, float]:
+    """Return (ncols, fontsize) optimized for n_items so the legend never overflows."""
+    if n_items <= 6:
+        return 1, 9.5
+    elif n_items <= 12:
+        return 2, 9.0
+    elif n_items <= 24:
+        return 3, 8.5
+    elif n_items <= 36:
+        return 4, 8.0
+    elif n_items <= 48:
+        return 5, 7.5
+    else:
+        return min(6, max(1, (n_items + 7) // 8)), 7.0
+
+
+def _style_legend(ax: Axes, fontsize: int | float | None = None) -> None:
     """Make legend text visible on the current theme background."""
     leg = ax.get_legend()
     if leg is None:
@@ -93,7 +111,8 @@ def _style_legend(ax: Axes) -> None:
     leg.get_frame().set_alpha(0.9)
     for text in leg.get_texts():
         text.set_color(get_chart_text2())
-        text.set_fontsize(8)
+        if fontsize is not None:
+            text.set_fontsize(fontsize)
 
 
 def _finish(fig: Figure, ax: Axes) -> None:
@@ -121,10 +140,13 @@ class ChartEngine:
         """Apply the current theme style to figure and axes."""
         fig.patch.set_facecolor(get_chart_bg())
         ax.set_facecolor(get_chart_axes_bg())
-        ax.tick_params(colors=get_chart_text2(), which="both", labelsize=8)
+        ax.tick_params(colors=get_chart_text2(), which="both", labelsize=10)  # was 8
         ax.xaxis.label.set_color(get_chart_text2())
         ax.yaxis.label.set_color(get_chart_text2())
+        ax.xaxis.label.set_size(11)   # was default (~10)
+        ax.yaxis.label.set_size(11)   # was default (~10)
         ax.title.set_color(get_chart_text())
+        ax.title.set_size(12)         # was default (~10)
         for spine in ax.spines.values():
             spine.set_edgecolor(get_chart_border())
             spine.set_linewidth(0.8)
@@ -150,19 +172,43 @@ class ChartEngine:
           Moderate  : 0.50 <= VC < 0.70
           Weak      : VC  <  0.50
           Failed    : NaN / None
+
+        Colors are theme-aware: dark theme uses vivid saturated backgrounds
+        with white text; light theme uses pastel tinted backgrounds with dark,
+        readable foreground text so the label is never lost against a white cell.
         """
+        if is_dark():
+            # Dark theme — vivid badge-style cells, white text always legible
+            _tiers = [
+                ("Excellent", C_SUCCESS, "#FFFFFF"),
+                ("Good",      C_ACCENT,  "#FFFFFF"),
+                ("Moderate",  C_WARN,    "#FFFFFF"),
+                ("Weak",      C_ERROR,   "#FFFFFF"),
+                ("Failed",    C_BG_CARD, C_TEXT2),
+            ]
+        else:
+            # Light theme — pastel backgrounds, dark themed text for contrast
+            _tiers = [
+                ("Excellent", "#C6F4DE", "#0D6B3A"),  # green tint / dark green text
+                ("Good",      "#C9E4FA", "#0D4F8A"),  # blue tint  / dark blue text
+                ("Moderate",  "#FDF0C2", "#7A4F00"),  # amber tint / dark amber text
+                ("Weak",      "#FAD4DA", "#8B001A"),  # red tint   / dark red text
+                ("Failed",    L_BG_RAISED, L_TEXT2),
+            ]
+
         if vc is None:
-            return ("Failed", C_BG_CARD, C_TEXT2)
+            return _tiers[4]  # Failed
         try:
             if math.isnan(float(vc)):
-                return ("Failed", C_BG_CARD, C_TEXT2)
+                return _tiers[4]  # Failed
         except (TypeError, ValueError):
-            return ("Failed", C_BG_CARD, C_TEXT2)
+            return _tiers[4]  # Failed
+
         v = float(vc)
-        if v >= 0.90:  return ("Excellent", C_SUCCESS, "#FFFFFF")
-        if v >= 0.70:  return ("Good",      C_ACCENT,  "#FFFFFF")
-        if v >= 0.50:  return ("Moderate",  C_WARN,    "#FFFFFF")
-        return              ("Weak",       C_ERROR,   "#FFFFFF")
+        if v >= 0.90:  return _tiers[0]  # Excellent
+        if v >= 0.70:  return _tiers[1]  # Good
+        if v >= 0.50:  return _tiers[2]  # Moderate
+        return              _tiers[3]    # Weak
 
     # ------------------------------------------------------------------
     # Step 4 charts
@@ -205,15 +251,15 @@ class ChartEngine:
                     bar.get_width() + x_max * 0.02,
                     bar.get_y() + bar.get_height() / 2.0,
                     str(int(val)),
-                    va="center", ha="left", color=C_TEXT, fontsize=8,
+                    va="center", ha="left", color=get_chart_text(), fontsize=10,  # was 8
                     fontweight="bold",
                 )
 
-            ax.set_xlabel("Wins", color=C_TEXT)
-            ax.set_title("Element Ranking by Wins", color=C_TEXT)
+            ax.set_xlabel("Wins", color=get_chart_text())
+            ax.set_title("Element Ranking by Wins", color=get_chart_text())
             ax.set_xlim(0, x_max * 1.18)
             # Scale Y-tick font by number of elements to prevent overlap
-            tick_fs = max(6, min(9, 120 // max(len(df_plot), 1)))
+            tick_fs = max(8, min(11, 150 // max(len(df_plot), 1)))  # was max(6, min(9,...))
             ax.tick_params(axis="y", labelsize=tick_fs)
             _finish(fig, ax)
 
@@ -275,17 +321,30 @@ class ChartEngine:
             except Exception:
                 pass
 
-            ax.set_xlabel("Wavelength (nm)", color=C_TEXT, fontsize=9)
-            ax.set_ylabel("Score (log)", color=C_TEXT, fontsize=9)
-            ax.set_title("Emission Line Scores by Element", color=C_TEXT,
-                         fontsize=10, fontweight="bold", pad=6)
+            ax.set_xlabel("Wavelength (nm)", color=get_chart_text(), fontsize=11)   # was 9
+            ax.set_ylabel("Score (log)", color=get_chart_text(), fontsize=11)        # was 9
+            ax.set_title("Emission Line Scores by Element", color=get_chart_text(),
+                         fontsize=12, fontweight="bold", pad=6)            # was 10
 
             n_elem = len(elements)
-            ncols  = min(n_elem, 3) if n_elem <= 9 else 4
-            ax.legend(loc="upper right", fontsize=7, framealpha=0.5,
-                      ncol=ncols, handlelength=1.0, borderpad=0.5,
-                      labelspacing=0.3)
-            _style_legend(ax)
+            ncols, leg_fs = _compute_legend_layout(n_elem)
+            leg = ax.legend(
+                loc="upper right",
+                fontsize=leg_fs,
+                framealpha=0.6,
+                ncol=ncols,
+                handlelength=1.0,
+                handletextpad=0.4,
+                columnspacing=0.8,
+                borderpad=0.35,
+                labelspacing=0.25,
+            )
+            if leg and hasattr(leg, "set_draggable"):
+                try:
+                    leg.set_draggable(True)
+                except Exception:
+                    pass
+            _style_legend(ax, fontsize=leg_fs)
             _finish(fig, ax)
 
         except Exception:
@@ -368,7 +427,7 @@ class ChartEngine:
                 ax.text(mid, count + y_max * 0.02,
                         str(count),
                         ha="center", va="bottom",
-                        color=C_TEXT, fontsize=9, fontweight="bold")
+                        color=get_chart_text(), fontsize=11, fontweight="bold")  # was 9
 
                 # Wavelength list inside bar (up to 8 to avoid overflow)
                 wls = tier_wavelengths[tier_idx]
@@ -384,24 +443,24 @@ class ChartEngine:
                     ax.text(mid, text_y,
                             wl_text,
                             ha="center", va="center",
-                            color="#FFFFFF", fontsize=8.5,
+                            color="#FFFFFF", fontsize=10,   # was 8.5
                             fontweight="bold",
                             alpha=0.95,
                             linespacing=1.4)
 
-            ax.set_title("Validation Coefficient Distribution", color=C_TEXT,
-                         fontsize=10, fontweight="bold")
-            ax.set_xlabel("Validation Coefficient (VC)", color=C_TEXT)
-            ax.set_ylabel("Number of Lines", color=C_TEXT)
+            ax.set_title("Validation Coefficient Distribution", color=get_chart_text(),
+                         fontsize=12, fontweight="bold")               # was 10
+            ax.set_xlabel("Validation Coefficient (VC)", color=get_chart_text())
+            ax.set_ylabel("Number of Lines", color=get_chart_text())
             ax.set_xticks(TIER_BINS)
-            ax.set_xticklabels([f"{b:.2f}" for b in TIER_BINS], fontsize=8)
+            ax.set_xticklabels([f"{b:.2f}" for b in TIER_BINS], fontsize=10)  # was 8
             ax.set_xlim(-0.04, 1.06)
             ax.set_ylim(0, y_max * 1.25)
 
             import matplotlib.ticker as ticker
             ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
 
-            ax.legend(loc="upper left", fontsize=7.5, framealpha=0.7,
+            ax.legend(loc="upper left", fontsize=10, framealpha=0.7,   # was 7.5
                       handlelength=1.2)
             _style_legend(ax)
             _finish(fig, ax)
@@ -463,16 +522,16 @@ class ChartEngine:
                     bar.get_width() + x_max * 0.02,
                     bar.get_y() + bar.get_height() / 2.0,
                     str(int(val)),
-                    va="center", ha="left", color=C_TEXT, fontsize=8,
+                    va="center", ha="left", color=get_chart_text(), fontsize=10,  # was 8
                     fontweight="bold",
                 )
 
             ax.set_xlim(0, x_max * 1.18)
-            ax.set_xlabel("Matched Lines (Wins)", color=C_TEXT)
-            ax.set_title("Elemental Preference Ranking", color=C_TEXT)
+            ax.set_xlabel("Matched Lines (Wins)", color=get_chart_text())
+            ax.set_title("Elemental Preference Ranking", color=get_chart_text())
 
             # Scale Y-tick font by number of elements to prevent overlap
-            tick_fs = max(6, min(9, 120 // max(len(df_plot), 1)))
+            tick_fs = max(8, min(11, 150 // max(len(df_plot), 1)))  # was max(6, min(9,...))
             ax.tick_params(axis="y", labelsize=tick_fs)
 
             # Legend with three confidence-tier entries
@@ -482,7 +541,7 @@ class ChartEngine:
                 mpatches.Patch(color=C_WARN,    label="Medium (3–9)"),
                 mpatches.Patch(color=C_ERROR,   label="Low (<3)"),
             ]
-            ax.legend(handles=legend_handles, loc="lower right", fontsize=8)
+            ax.legend(handles=legend_handles, loc="lower right", fontsize=10)  # was 8
             _style_legend(ax)
 
             _finish(fig, ax)
@@ -519,16 +578,21 @@ class ChartEngine:
 
             bars  = ax.barh(elements, values, color=colours, edgecolor="none")
             x_max = max(values) if values else 1
+            n_elem = len(elements)
+            val_fs = max(7, min(10, 140 // max(n_elem, 1)))
+            tick_fs = max(7, min(10, 150 // max(n_elem, 1)))
+
             for bar, val in zip(bars, values):
                 ax.text(
                     bar.get_width() + x_max * 0.02,
                     bar.get_y() + bar.get_height() / 2.0,
                     str(int(val)),
-                    va="center", ha="left", color=C_TEXT, fontsize=9,
+                    va="center", ha="left", color=get_chart_text(), fontsize=val_fs,
                 )
+            ax.tick_params(axis="y", labelsize=tick_fs)
             ax.set_xlim(0, x_max * 1.18)
-            ax.set_xlabel("Matched Peaks", color=C_TEXT)
-            ax.set_title("Element Identification Frequency", color=C_TEXT)
+            ax.set_xlabel("Matched Peaks", color=get_chart_text())
+            ax.set_title("Element Identification Frequency", color=get_chart_text())
             _finish(fig, ax)
 
         except Exception:
@@ -564,11 +628,29 @@ class ChartEngine:
                            color=colour_map[elem],
                            s=35, alpha=0.85, edgecolors="none")
 
-            ax.set_xlabel("Wavelength (nm)", color=C_TEXT)
-            ax.set_ylabel("Match Score", color=C_TEXT)
-            ax.set_title("Match Score vs. Wavelength", color=C_TEXT)
-            ax.legend(loc="best", fontsize=8, framealpha=0.5)
-            _style_legend(ax)
+            ax.set_xlabel("Wavelength (nm)", color=get_chart_text())
+            ax.set_ylabel("Match Score", color=get_chart_text())
+            ax.set_title("Match Score vs. Wavelength", color=get_chart_text())
+
+            n_elem = len(by_elem)
+            ncols, leg_fs = _compute_legend_layout(n_elem)
+            leg = ax.legend(
+                loc="upper right",
+                ncol=ncols,
+                fontsize=leg_fs,
+                framealpha=0.6,
+                handlelength=1.0,
+                handletextpad=0.4,
+                columnspacing=0.8,
+                borderpad=0.35,
+                labelspacing=0.25,
+            )
+            if leg and hasattr(leg, "set_draggable"):
+                try:
+                    leg.set_draggable(True)
+                except Exception:
+                    pass
+            _style_legend(ax, fontsize=leg_fs)
             _finish(fig, ax)
 
         except Exception:
@@ -594,11 +676,11 @@ class ChartEngine:
         # previous render are fully removed from the figure.
         fig = ax.get_figure()
         try:
-            # Relax guard: require at least 1 row AND 1 column with real data
+            # Relax guard: require at least 2 rows AND 2 columns with real data
             if (heatmap_matrix is None
                     or not hasattr(heatmap_matrix, "shape")
-                    or heatmap_matrix.shape[0] < 1
-                    or heatmap_matrix.shape[1] < 1
+                    or heatmap_matrix.shape[0] < 2
+                    or heatmap_matrix.shape[1] < 2
                     or heatmap_matrix.size == 0):
                 ChartEngine._show_placeholder(ax, "Insufficient heatmap data")
                 ChartEngine.apply_dark_style(fig, ax)
@@ -624,8 +706,8 @@ class ChartEngine:
 
             # Colorbar — safe because the caller cleared the whole figure first
             cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label("Validation Coefficient (VC)", color=get_chart_text2(), fontsize=8)
-            cbar.ax.tick_params(colors=get_chart_text2(), labelsize=7)
+            cbar.set_label("Validation Coefficient (VC)", color=get_chart_text2(), fontsize=10)  # was 8
+            cbar.ax.tick_params(colors=get_chart_text2(), labelsize=9)   # was 7
             cbar.ax.yaxis.set_tick_params(color=get_chart_text2())
 
             # Cell annotations
@@ -637,30 +719,27 @@ class ChartEngine:
                         text_colour = get_chart_text2()
                     else:
                         label = f"{val:.2f}"
-                        # White text on dark/saturated cells, dark on light cells
-                        norm_val = val / v_max  # in [-1, 1]
-                        text_colour = "#FFFFFF" if abs(norm_val) >= 0.45 else "#1A1A1A"
+                        text_colour = "#FFFFFF" if val >= 0.5 else "#141519"
                     ax.text(j, i, label,
                             ha="center", va="center",
                             color=text_colour,
-                            fontsize=7, fontweight="bold")
+                            fontsize=9, fontweight="bold")  # was 7
 
             # Axis labels
             ax.set_yticks(range(n_rows))
-            # Truncate long peak labels to keep the chart readable
             truncated_peak = [
                 (lbl[:22] + "…") if len(lbl) > 25 else lbl
                 for lbl in peak_labels
             ]
-            ax.set_yticklabels(truncated_peak, fontsize=7)
+            ax.set_yticklabels(truncated_peak, fontsize=9)   # was 7
             ax.set_xticks(range(n_cols))
-            ax.set_xticklabels(element_labels, fontsize=8, rotation=45, ha="right")
-            ax.set_xlabel("Elements", color=get_chart_text2(), fontsize=8)
-            ax.set_ylabel("Peaks (wavelength)", color=get_chart_text2(), fontsize=8)
+            ax.set_xticklabels(element_labels, fontsize=10, rotation=45, ha="right")  # was 8
+            ax.set_xlabel("Elements", color=get_chart_text2(), fontsize=11)    # was 8
+            ax.set_ylabel("Peaks (wavelength)", color=get_chart_text2(), fontsize=11)  # was 8
             ax.set_title(
                 "Ambiguous Peaks vs Elements  (VC correlation)",
                 color=get_chart_text(),
-                fontsize=10, fontweight="bold",
+                fontsize=12, fontweight="bold",  # was 10
             )
 
             _finish(fig, ax)
@@ -718,7 +797,7 @@ class ChartEngine:
                     bar.get_width() + x_max * 0.02,
                     bar.get_y() + bar.get_height() / 2.0,
                     str(int(val)),
-                    va="center", ha="left", color=C_TEXT, fontsize=8,
+                    va="center", ha="left", color=get_chart_text(), fontsize=10,  # was 8
                     fontweight="bold",
                 )
 
@@ -730,14 +809,14 @@ class ChartEngine:
                 Patch(facecolor=C_ERROR,   label="Low < 3"),
             ]
             ax.legend(handles=legend_elements, loc="lower right",
-                      fontsize=7.5, framealpha=0.6)
+                      fontsize=10, framealpha=0.6)   # was 7.5
             _style_legend(ax)
 
-            ax.set_xlabel("Matched Lines", color=C_TEXT)
-            ax.set_title("Elemental Preference Ranking", color=C_TEXT,
-                         fontsize=10, fontweight="bold")
+            ax.set_xlabel("Matched Lines", color=get_chart_text())
+            ax.set_title("Elemental Preference Ranking", color=get_chart_text(),
+                         fontsize=12, fontweight="bold")              # was 10
             ax.set_xlim(0, x_max * 1.22)
-            tick_fs = max(6, min(9, 120 // max(len(df_plot), 1)))
+            tick_fs = max(8, min(11, 150 // max(len(df_plot), 1)))   # was max(6, min(9,...))
             ax.tick_params(axis="y", labelsize=tick_fs)
             _finish(fig, ax)
 
@@ -850,7 +929,7 @@ class ChartEngine:
                 ax.text(x, HDR_Y, label,
                         ha=ha, va="center",
                         color=get_chart_text2(),
-                        fontsize=7.5, fontweight="bold")
+                        fontsize=9, fontweight="bold")   # was 7.5
 
             # thin separator under headers
             ax.axhline(TOTAL_H + 0.28, xmin=0.01, xmax=0.99,
@@ -900,7 +979,7 @@ class ChartEngine:
                 ax.text(FZ_CX, mid_y - 0.12, unit,
                         ha="center", va="center",
                         color="#FFFFFF", alpha=0.65,
-                        fontsize=7, zorder=5)
+                        fontsize=8, zorder=5)             # was 7
 
                 # ── LEFT ZONE: step badge ─────────────────────────────────
                 # Rounded pill badge: "Step N"
@@ -919,19 +998,19 @@ class ChartEngine:
                 ax.text(badge_cx, badge_cy, step_lbl,
                         ha="center", va="center",
                         color="#FFFFFF",
-                        fontsize=7, fontweight="bold", zorder=5)
+                        fontsize=8, fontweight="bold", zorder=5)   # was 7
 
                 # Stage title
                 ax.text(LZ_X, mid_y + 0.06, title,
                         ha="left", va="center",
                         color=get_chart_text(),
-                        fontsize=8.5, fontweight="bold", zorder=4)
+                        fontsize=10, fontweight="bold", zorder=4)  # was 8.5
 
                 # Description — secondary, smaller, muted
                 ax.text(LZ_X, mid_y - 0.22, desc,
                         ha="left", va="center",
                         color=get_chart_text2(),
-                        fontsize=7.0, zorder=4)
+                        fontsize=8.5, zorder=4)                    # was 7.0
 
                 # ── RIGHT ZONE: retention pill ────────────────────────────
                 retention_pct = count / stage1_count * 100.0
@@ -949,11 +1028,11 @@ class ChartEngine:
                 ax.text(RZ_CX, mid_y + 0.08, f"{retention_pct:.0f}%",
                         ha="center", va="center",
                         color=colour,
-                        fontsize=9, fontweight="bold", zorder=5)
+                        fontsize=10, fontweight="bold", zorder=5)  # was 9
                 ax.text(RZ_CX, mid_y - 0.13, "retained",
                         ha="center", va="center",
                         color=get_chart_text2(),
-                        fontsize=6.5, zorder=5)
+                        fontsize=8, zorder=5)                      # was 6.5
 
                 # ── ARROW + FILTER ANNOTATION between stages ──────────────
                 if i < n - 1:
@@ -997,23 +1076,23 @@ class ChartEngine:
                                 f"\u2212{dropped:,} filtered",
                                 ha="center", va="center",
                                 color=C_WARN,
-                                fontsize=7, fontweight="bold", zorder=6)
+                                fontsize=8, fontweight="bold", zorder=6)  # was 7
                         ax.text(fp_cx, a_mid - 0.10,
                                 f"{pct:.0f}% removed",
                                 ha="center", va="center",
                                 color=get_chart_text2(),
-                                fontsize=6.5, zorder=6)
+                                fontsize=7.5, zorder=6)                   # was 6.5
                     elif count > 0:
                         ax.text(FZ_CX + 0.03, a_mid,
                                 "no reduction",
                                 ha="left", va="center",
                                 color=get_chart_text2(),
-                                fontsize=7, zorder=5)
+                                fontsize=8, zorder=5)                     # was 7
 
             ax.set_title(
                 "Multi-Stage Validation Pipeline",
                 color=get_chart_text(),
-                fontsize=10, fontweight="bold", pad=10,
+                fontsize=12, fontweight="bold", pad=10,  # was 10
             )
 
             try:
@@ -1058,22 +1137,22 @@ class ChartEngine:
                     ax.text(
                         i, pct + 1.5, f"{pct:.1f}%",
                         ha="center", va="bottom",
-                        color=C_TEXT, fontsize=9, fontweight="bold",
+                        color=get_chart_text(), fontsize=11, fontweight="bold",  # was 9
                     )
                 else:
                     ax.text(
                         i, 5, "N/A",
                         ha="center", va="bottom",
-                        color=C_TEXT2, fontsize=9, style="italic",
+                        color=get_chart_text2(), fontsize=11, style="italic",    # was 9
                     )
 
             ax.set_xticks(list(x_perc))
-            ax.set_xticklabels(METRIC_LABELS_PERC, fontsize=9)
+            ax.set_xticklabels(METRIC_LABELS_PERC, fontsize=11)        # was 9
             ax.set_ylim(0, 110)
-            ax.set_ylabel("Score (%)", color=C_TEXT)
+            ax.set_ylabel("Score (%)", color=get_chart_text())
             ax.set_title(
                 "Model Performance Metrics",
-                color=C_TEXT, fontsize=10, fontweight="bold",
+                color=get_chart_text(), fontsize=12, fontweight="bold",          # was 10
             )
 
             # ── SBR bar on secondary axis ──────────────────────────────────
@@ -1084,7 +1163,7 @@ class ChartEngine:
                 ax2.text(
                     sbr_x, sbr * 1.02 + 0.05, f"{sbr:.2f}×",
                     ha="center", va="bottom",
-                    color=C_TEXT, fontsize=9, fontweight="bold",
+                    color=get_chart_text(), fontsize=11, fontweight="bold",   # was 9
                 )
             elif sbr == float("inf"):
                 ax2.text(
@@ -1096,16 +1175,19 @@ class ChartEngine:
                 ax2.text(
                     sbr_x, 0.1, "N/A",
                     ha="center", va="bottom",
-                    color=C_TEXT2, fontsize=9, style="italic",
+                    color=get_chart_text2(), fontsize=11, style="italic",     # was 9
                 )
 
-            ax2.set_ylabel("SBR Improvement (×)", color=C_TEXT)
-            ax2.tick_params(colors=get_chart_text2(), labelsize=8)
+            ax2.set_ylabel("SBR Improvement (×)", color=get_chart_text())
+            ax2.tick_params(colors=get_chart_text2(), labelsize=10)  # was 8
+            for spine in ax2.spines.values():
+                spine.set_edgecolor(get_chart_border())
+                spine.set_linewidth(0.8)
 
             # Extend x-range to include the SBR position; share labels with ax
             all_labels = METRIC_LABELS_PERC + ["SBR"]
             ax.set_xticks(list(range(5)))
-            ax.set_xticklabels(all_labels, fontsize=9)
+            ax.set_xticklabels(all_labels, fontsize=11)              # was 9
             ax.set_xlim(-0.6, 4.6)
             ax2.set_xlim(-0.6, 4.6)
 

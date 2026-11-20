@@ -68,11 +68,12 @@ class CSVWriter:
             })
             
             # Write with high precision
-            with open(filepath, 'w') as f:
-                f.write(df.to_csv(
-                    index=False,
-                    float_format=f'%.{self.precision}g'
-                ))
+            df.to_csv(
+                filepath,
+                index=False,
+                float_format=f'%.{self.precision}g',
+                lineterminator='\n',
+            )
             
             logger.info(f"Successfully wrote {len(df)} rows to {filepath}")
             return Path(filepath)
@@ -106,11 +107,12 @@ class CSVWriter:
                 'Intensity': [p.intensity for p in peaks]
             })
             
-            with open(filepath, 'w') as f:
-                f.write(df.to_csv(
-                    index=False,
-                    float_format=f'%.{self.precision}g'
-                ))
+            df.to_csv(
+                filepath,
+                index=False,
+                float_format=f'%.{self.precision}g',
+                lineterminator='\n',
+            )
             
             logger.info(f"Successfully wrote {len(df)} peaks to {filepath}")
             return Path(filepath)
@@ -149,11 +151,12 @@ class CSVWriter:
                 'Element': [m.element for m in matches]
             })
             
-            with open(filepath, 'w') as f:
-                f.write(df.to_csv(
-                    index=False,
-                    float_format=f'%.{self.precision}g'
-                ))
+            df.to_csv(
+                filepath,
+                index=False,
+                float_format=f'%.{self.precision}g',
+                lineterminator='\n',
+            )
             
             logger.info(f"Successfully wrote {len(df)} matches to {filepath}")
             return Path(filepath)

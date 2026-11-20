@@ -823,7 +823,7 @@ class PerformanceCalculator:
                     wl_series = pd.to_numeric(
                         validation_results[wl_col_name], errors="coerce"
                     )
-                    _TOL = 1.0  # nm
+                    _TOL = 2.0  # nm — wider tolerance for target vs NIST ref wl
 
                     # Build fast lookup arrays once
                     ref_wls, ref_elems = [], []
@@ -870,14 +870,14 @@ class PerformanceCalculator:
                         for elem in linked:
                             elem_vc.setdefault(elem, []).append(vc_f)
 
-                # ── Strategy 3: distribute global mean to all ranked elements
-                # when neither linkage method produced any values.
-                if not elem_vc:
-                    all_vc = vc_series.dropna().tolist()
-                    if all_vc:
-                        global_mean = float(np.mean(all_vc))
-                        for elem in ranking_df["Element"].dropna().tolist():
-                            elem_vc[str(elem)] = all_vc  # each element sees all
+            # ── Strategy 3: distribute global VC to all ranked elements ────
+            # Fires when neither Strategy 1 nor 2 produced any linkage —
+            # e.g. matches is None/empty or wavelength tolerance too tight.
+            if not elem_vc and vc_col_name:
+                all_vc = vc_series.dropna().tolist()
+                if all_vc:
+                    for elem in ranking_df["Element"].dropna().tolist():
+                        elem_vc[str(elem)] = all_vc  # each element sees all VCs
 
         # Compute mean VC per element from accumulated lists
         elem_mean_vc: dict[str, float | None] = {

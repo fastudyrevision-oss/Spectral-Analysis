@@ -24,8 +24,10 @@ from src.config import STEP4_PARAMS
 from src.core.step4_elemental_preferences import ElementalPreferencesAnalyzer
 from src.gui.gui_utils import (
     HighDpiToolbar as NavigationToolbar2QT,
+    style_toolbar,
     FileSelector, WorkerThread, FileHistory, RecentFilesButton,
-    show_error, show_info
+    show_error, show_info,
+    make_table_toolbar, on_copy_table_clicked,
 )
 from src.gui.theme import (
     primary_button_style, instruction_banner_style, step_title_font,
@@ -248,17 +250,40 @@ class Step4Widget(QWidget):
         scl.addWidget(self.scatter_toolbar)
         self.chart_tabs.addTab(scatter_container, "Score Scatter")
 
+        self._show_placeholders()
+
         # Tab 3: Element Ranking table
         self.ranking_table = self._create_ranking_table()
-        self.chart_tabs.addTab(self.ranking_table, "📋 Element Ranking")
+        _rank_container, self._ranking_copy_btn, self._ranking_row_label = \
+            make_table_toolbar(self.ranking_table, row_label_text="— rows")
+        self._ranking_copy_btn.clicked.connect(
+            lambda: on_copy_table_clicked(
+                self.ranking_table, self._ranking_copy_btn, self._ranking_row_label
+            )
+        )
+        self.chart_tabs.addTab(_rank_container, "📋 Element Ranking")
 
         # Tab 4: Peak Competition table
         self.competition_table = self._create_results_table()
-        self.chart_tabs.addTab(self.competition_table, "📋 Peak Competition")
+        _comp_container, self._competition_copy_btn, self._competition_row_label = \
+            make_table_toolbar(self.competition_table, row_label_text="— rows")
+        self._competition_copy_btn.clicked.connect(
+            lambda: on_copy_table_clicked(
+                self.competition_table, self._competition_copy_btn, self._competition_row_label
+            )
+        )
+        self.chart_tabs.addTab(_comp_container, "📋 Peak Competition")
 
         # Tab 5: Winner Lines table
         self.winners_table = self._create_winners_table()
-        self.chart_tabs.addTab(self.winners_table, "📋 Winner Lines")
+        _win_container, self._winners_copy_btn, self._winners_row_label = \
+            make_table_toolbar(self.winners_table, row_label_text="— rows")
+        self._winners_copy_btn.clicked.connect(
+            lambda: on_copy_table_clicked(
+                self.winners_table, self._winners_copy_btn, self._winners_row_label
+            )
+        )
+        self.chart_tabs.addTab(_win_container, "📋 Winner Lines")
 
         # Keep results_tabs as an alias so existing code that references it still works
         self.results_tabs = self.chart_tabs
@@ -300,6 +325,20 @@ class Step4Widget(QWidget):
     # Theme
     # ──────────────────────────────────────────────────────────────────────
 
+    def _show_placeholders(self):
+        chart_bg = get_chart_bg()
+        for fig, canvas, msg in [
+            (self.ranking_fig, self.ranking_canvas, "No data — run Elemental Preferences"),
+            (self.scatter_fig, self.scatter_canvas, "No data — run Elemental Preferences"),
+        ]:
+            fig.clear()
+            fig.patch.set_facecolor(chart_bg)
+            canvas.setStyleSheet(f"background-color: {chart_bg};")
+            ax = fig.add_subplot(111)
+            ChartEngine._show_placeholder(ax, msg)
+            ChartEngine.apply_dark_style(fig, ax)
+            canvas.draw()
+
     def apply_theme(self):
         """Update chart backgrounds when the global theme changes."""
         from src.gui.theme import step_title_font, instruction_banner_style, summary_banner_style
@@ -308,10 +347,17 @@ class Step4Widget(QWidget):
                              (self.scatter_fig, self.scatter_canvas)]:
             fig.patch.set_facecolor(chart_bg)
             canvas.setStyleSheet(f"background-color: {chart_bg};")
-            canvas.draw()
+
+        if self.analysis_results is not None:
+            self._update_charts()
+        else:
+            self._show_placeholders()
+
         self._title_label.setStyleSheet(step_title_font(13))
         self._instructions_label.setStyleSheet(instruction_banner_style())
         self.summary_banner.setStyleSheet(summary_banner_style())
+        style_toolbar(self.ranking_toolbar)
+        style_toolbar(self.scatter_toolbar)
 
     # ──────────────────────────────────────────────────────────────────────
     # Event handlers
@@ -502,6 +548,11 @@ class Step4Widget(QWidget):
             self.ranking_table.setItem(row, 2, QTableWidgetItem(str(int(r['Wins']))))
             self.ranking_table.setItem(row, 3, QTableWidgetItem(f"{r['Total_Score']:.3e}"))
             self.ranking_table.setItem(row, 4, QTableWidgetItem(f"{r['Avg_Score']:.3e}"))
+        n_rank = len(ranking_df)
+        self._ranking_row_label.setText(f"{n_rank} row{'s' if n_rank != 1 else ''}")
+        self._ranking_copy_btn.setEnabled(n_rank > 0)
+        self._ranking_copy_btn.setChecked(False)
+        self._ranking_copy_btn.setText("⎘  Copy")
 
         winners_df = self.analysis_results['winner_lines']
         self.winners_table.setRowCount(len(winners_df))
@@ -511,6 +562,11 @@ class Step4Widget(QWidget):
             self.winners_table.setItem(row, 2, QTableWidgetItem(f"{w['NIST_Matched_Wavelength']:.2f}"))
             self.winners_table.setItem(row, 3, QTableWidgetItem(f"{w['Confidence_Score']:.3e}"))
             self.winners_table.setItem(row, 4, QTableWidgetItem(str(int(w['Num_Competitors']))))
+        n_win = len(winners_df)
+        self._winners_row_label.setText(f"{n_win} row{'s' if n_win != 1 else ''}")
+        self._winners_copy_btn.setEnabled(n_win > 0)
+        self._winners_copy_btn.setChecked(False)
+        self._winners_copy_btn.setText("⎘  Copy")
 
         comp_df = self.analysis_results['competition'].head(100)
         self.competition_table.setRowCount(len(comp_df))
@@ -519,6 +575,11 @@ class Step4Widget(QWidget):
             self.competition_table.setItem(row, 1, QTableWidgetItem(str(c['Winner'])))
             self.competition_table.setItem(row, 2, QTableWidgetItem(f"{c['Max_Score']:.3e}"))
             self.competition_table.setItem(row, 3, QTableWidgetItem(str(int(c['Num_Competitors']))))
+        n_comp = len(comp_df)
+        self._competition_row_label.setText(f"{n_comp} row{'s' if n_comp != 1 else ''}")
+        self._competition_copy_btn.setEnabled(n_comp > 0)
+        self._competition_copy_btn.setChecked(False)
+        self._competition_copy_btn.setText("⎘  Copy")
 
         logger.info("Tables populated with analysis results")
 
@@ -645,9 +706,12 @@ class Step4Widget(QWidget):
             return
         try:
             base = str(Path(filepath).with_suffix(''))
-            self.analysis_results['ranking'].to_csv(f"{base}_ranking.csv", index=False)
-            self.analysis_results['competition'].to_csv(f"{base}_competition.csv", index=False)
-            self.analysis_results['winner_lines'].to_csv(f"{base}_winners.csv", index=False)
+            self.analysis_results['ranking'].to_csv(
+                f"{base}_ranking.csv", index=False, lineterminator='\n')
+            self.analysis_results['competition'].to_csv(
+                f"{base}_competition.csv", index=False, lineterminator='\n')
+            self.analysis_results['winner_lines'].to_csv(
+                f"{base}_winners.csv", index=False, lineterminator='\n')
             show_info("Success",
                       f"Results saved:\n{base}_ranking.csv\n"
                       f"{base}_competition.csv\n{base}_winners.csv")

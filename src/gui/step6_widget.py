@@ -17,9 +17,10 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QSplitter,
-    QScrollArea, QTabWidget, QProgressBar, QFileDialog,
+    QScrollArea, QTabWidget, QProgressBar, QFileDialog, QApplication,
+    QStyledItemDelegate, QStyleOptionViewItem,
 )
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QFont, QColor, QPainter, QPalette
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
@@ -27,15 +28,60 @@ from src import setup_logger
 from src.core.step6_performance import PerformanceCalculator
 from src.gui.charts import ChartEngine
 from src.gui.export_engine import export_step6_csv, export_step6_png, generate_pdf_report
-from src.gui.gui_utils import HighDpiToolbar as NavigationToolbar2QT, WorkerThread, show_error, show_info
+from src.gui.gui_utils import HighDpiToolbar as NavigationToolbar2QT, style_toolbar, WorkerThread, show_error, show_info
 from src.gui.theme import (
     primary_button_style, secondary_button_style, step_title_font, summary_banner_style,
     progress_bar_style, instruction_banner_style,
-    C_SUCCESS, C_WARN, C_ERROR, C_TEXT, C_TEXT2,
-    get_chart_bg,
+    C_BG_BASE, C_BG_RAISED, C_BG_INPUT, C_BORDER, C_ACCENT,
+    C_SUCCESS, C_WARN, C_ERROR, C_TEXT, C_TEXT2, C_TEXT_MUTED,
+    get_chart_bg, is_dark,
+    L_SUCCESS, L_WARN, L_ERROR, L_BG_RAISED, L_TEXT2,
 )
 
 logger = setup_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Item delegate — ensures per-cell foreground colours are always honoured
+# even when the global QSS sets a colour on QTableWidget or its items.
+# ---------------------------------------------------------------------------
+
+class _CellColourDelegate(QStyledItemDelegate):
+    """Paint table cells using the item's own Background/Foreground roles.
+
+    Qt's stylesheet engine overrides QTableWidgetItem.setForeground() for
+    normal (non-hovered, non-selected) cells because the global
+    ``QWidget { color: … }`` rule cascades into table items.
+
+    This delegate intercepts ``initStyleOption`` — which runs *after* the
+    stylesheet is resolved but *before* painting — and writes the item's
+    stored ForegroundRole / BackgroundRole colours directly into the
+    QStyleOption palette, so they are always respected.
+
+    Note: Qt stores colours set via setBackground/setForeground as QBrush,
+    not QColor, so we call .color() to extract the QColor from the brush.
+    """
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+
+        bg_brush = index.data(Qt.ItemDataRole.BackgroundRole)
+        fg_brush = index.data(Qt.ItemDataRole.ForegroundRole)
+
+        if bg_brush is not None:
+            colour = bg_brush.color() if hasattr(bg_brush, "color") else QColor(bg_brush)
+            if colour.isValid():
+                option.palette.setColor(QPalette.ColorRole.Base, colour)
+                option.palette.setColor(QPalette.ColorRole.AlternateBase, colour)
+
+        if fg_brush is not None:
+            colour = fg_brush.color() if hasattr(fg_brush, "color") else QColor(fg_brush)
+            if colour.isValid():
+                option.palette.setColor(QPalette.ColorRole.Text, colour)
+                # Keep white text on the accent-coloured selection background
+                option.palette.setColor(
+                    QPalette.ColorRole.HighlightedText, QColor("#FFFFFF")
+                )
 
 
 class Step6Widget(QWidget):
@@ -237,11 +283,13 @@ class Step6Widget(QWidget):
         tab14 = self._wrap_canvas(self.canvas14, self.toolbar14)
         self.chart_tabs.addTab(tab14, " Metrics")
 
-        # Summary table as a tab
-        self.summary_table = self._create_summary_table()
-        self.chart_tabs.addTab(self.summary_table, "📋 Summary Table")
+        # Summary table tab — _create_summary_table returns the container
+        # widget (toolbar + table) and also sets self.summary_table.
+        summary_tab = self._create_summary_table()
+        self.chart_tabs.addTab(summary_tab, "📋 Summary Table")
 
         layout.addWidget(self.chart_tabs)
+        self._reset_chart_placeholders()
         return panel
 
     @staticmethod
@@ -255,8 +303,56 @@ class Step6Widget(QWidget):
         cl.addWidget(toolbar)
         return container
 
-    def _create_summary_table(self) -> QTableWidget:
-        """Create the per-element summary QTableWidget (8 columns)."""
+    def _create_summary_table(self) -> QWidget:
+        """Create the summary table tab content: toolbar + themed QTableWidget.
+
+        Returns a QWidget container (not the table itself) so the tab holds
+        the toolbar+table pair.  The table is stored as ``self.summary_table``.
+        """
+        # ── Scrollbar stylesheet — themed to match the app dark palette ──
+        _SCROLLBAR_CSS = f"""
+QTableWidget {{
+    gridline-color: {C_BORDER};
+    border: none;
+}}
+QScrollBar:horizontal {{
+    background: {C_BG_BASE};
+    height: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+QScrollBar::handle:horizontal {{
+    background: {C_BORDER};
+    min-width: 28px;
+    border-radius: 5px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: {C_ACCENT};
+}}
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {{
+    width: 0px;
+}}
+QScrollBar:vertical {{
+    background: {C_BG_BASE};
+    width: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+QScrollBar::handle:vertical {{
+    background: {C_BORDER};
+    min-height: 28px;
+    border-radius: 5px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: {C_ACCENT};
+}}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+"""
+        # ── Table widget ───────────────────────────────────────────────
         t = QTableWidget()
         t.setColumnCount(8)
         t.setHorizontalHeaderLabels([
@@ -270,16 +366,83 @@ class Step6Widget(QWidget):
             "Best Lines (nm)",
         ])
         hdr = t.horizontalHeader()
-        # Let the last column stretch; all others resize to content
-        for col in range(7):
+        # All columns size to their content — horizontal scroll reveals overflow
+        for col in range(8):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        # Allow the user to manually resize if desired
+        hdr.setStretchLastSection(False)
         t.setAlternatingRowColors(True)
         t.setSortingEnabled(False)
-        t.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        t.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         t.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # NOTE: do NOT call t.setStyleSheet() here — any QSS on the table
+        # widget itself re-introduces the cascade that overrides the delegate's
+        # palette colours, making foreground text invisible in the normal state.
+        # Delegate ensures per-cell foreground is always painted correctly
+        # even when the global stylesheet sets a colour on QTableWidget::item
+        t.setItemDelegate(_CellColourDelegate(t))
         self._set_table_placeholder(t)
-        return t
+        self.summary_table = t
+
+        # ── Toolbar row above the table ────────────────────────────────
+        toolbar = QWidget()
+        toolbar.setFixedHeight(34)
+        toolbar.setStyleSheet(f"background-color: {C_BG_RAISED}; border-bottom: 1px solid {C_BORDER};")
+        tb_layout = QHBoxLayout(toolbar)
+        tb_layout.setContentsMargins(8, 0, 8, 0)
+        tb_layout.setSpacing(8)
+
+        self._table_row_label = QLabel("— rows")
+        self._table_row_label.setStyleSheet(f"color: {C_TEXT2}; font-size: 9pt; background: transparent; border: none;")
+        tb_layout.addWidget(self._table_row_label)
+
+        tb_layout.addStretch()
+
+        # Copy toggle button
+        self._copy_btn = QPushButton("⎘  Copy Table")
+        self._copy_btn.setCheckable(True)
+        self._copy_btn.setFixedHeight(24)
+        self._copy_btn.setToolTip("Copy all rows as tab-separated values to clipboard.\nClick again to deselect.")
+        self._copy_btn.setStyleSheet(f"""
+QPushButton {{
+    background-color: {C_BG_INPUT};
+    color: {C_TEXT2};
+    border: 1px solid {C_BORDER};
+    border-radius: 4px;
+    padding: 0 10px;
+    font-size: 9pt;
+}}
+QPushButton:hover {{
+    background-color: {C_BG_RAISED};
+    color: {C_TEXT};
+    border-color: {C_ACCENT};
+}}
+QPushButton:checked {{
+    background-color: {C_ACCENT};
+    color: #ffffff;
+    border-color: {C_ACCENT};
+}}
+QPushButton:disabled {{
+    color: {C_TEXT_MUTED};
+    border-color: {C_BORDER};
+    background-color: {C_BG_BASE};
+}}
+""")
+        self._copy_btn.setEnabled(False)
+        self._copy_btn.clicked.connect(self._on_copy_table_clicked)
+        tb_layout.addWidget(self._copy_btn)
+
+        # ── Container ──────────────────────────────────────────────────
+        container = QWidget()
+        # Apply the scrollbar CSS on the container, not on the table itself,
+        # so the table's stylesheet context stays clean for the delegate.
+        container.setStyleSheet(_SCROLLBAR_CSS)
+        cl = QVBoxLayout(container)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(0)
+        cl.addWidget(toolbar)
+        cl.addWidget(t, stretch=1)   # stretch=1 fills all remaining vertical space
+        return container
 
     # ------------------------------------------------------------------
     # Public API
@@ -340,11 +503,21 @@ class Step6Widget(QWidget):
         self.info_label.setText("Complete Steps 2–5 to enable performance metrics computation.")
 
         # Reset all four charts to placeholder state
+        self._reset_chart_placeholders()
+
+        # Reset summary table
+        self._set_table_placeholder(self.summary_table)
+
+    def _reset_chart_placeholders(self) -> None:
+        """Reset all four charts to theme-aware placeholder state."""
+        chart_bg = get_chart_bg()
         for fig, canvas in [
             (self.fig7,  self.canvas7),
             (self.fig11, self.canvas11),
             (self.fig14, self.canvas14),
         ]:
+            fig.patch.set_facecolor(chart_bg)
+            canvas.setStyleSheet(f"background-color: {chart_bg};")
             ax = fig.axes[0] if fig.axes else fig.add_subplot(111)
             ax.clear()
             ChartEngine._show_placeholder(ax, "No data — click Compute Metrics")
@@ -353,6 +526,8 @@ class Step6Widget(QWidget):
 
         # Fig 12 needs full figure clear to remove any orphaned colorbar axes
         self.fig12.clf()
+        self.fig12.patch.set_facecolor(chart_bg)
+        self.canvas12.setStyleSheet(f"background-color: {chart_bg};")
         self.ax12 = self.fig12.add_subplot(111)
         ChartEngine._show_placeholder(self.ax12, "No data — click Compute Metrics")
         ChartEngine.apply_dark_style(self.fig12, self.ax12)
@@ -361,9 +536,6 @@ class Step6Widget(QWidget):
         # Also clear the secondary axis on fig14
         self.ax14_2.clear()
         self.canvas14.draw()
-
-        # Reset summary table
-        self._set_table_placeholder(self.summary_table)
 
     def _compute_worker(self):
         """Worker function: read upstream data, call PerformanceCalculator."""
@@ -406,6 +578,13 @@ class Step6Widget(QWidget):
             return
 
         self.performance_results = results
+
+        # Persist immediately so the next launch can restore without recomputing
+        try:
+            from src.gui.session_manager import save_step6
+            save_step6(self.performance_results)
+        except Exception:
+            pass
 
         # ── Status banner ──────────────────────────────────────────────
         missing = results.get("missing_steps", [])
@@ -531,6 +710,23 @@ class Step6Widget(QWidget):
         ChartEngine.render_performance_metrics(self.ax14, metrics_dict, self.ax14_2)
         self.canvas14.draw()
 
+    def _update_charts(self) -> None:
+        """Update and redraw all 4 Step 6 charts with the current theme."""
+        chart_bg = get_chart_bg()
+        for fig, canvas in [
+            (self.fig7,  self.canvas7),
+            (self.fig11, self.canvas11),
+            (self.fig12, self.canvas12),
+            (self.fig14, self.canvas14),
+        ]:
+            fig.patch.set_facecolor(chart_bg)
+            canvas.setStyleSheet(f"background-color: {chart_bg};")
+
+        self._update_chart_fig7()
+        self._update_chart_fig11()
+        self._update_chart_fig12()
+        self._update_chart_fig14()
+
     # ------------------------------------------------------------------
     # Summary table (Task 5.4)
     # ------------------------------------------------------------------
@@ -539,61 +735,108 @@ class Step6Widget(QWidget):
         """Fill the 8-column summary table with colour-coded per-element rows."""
         if self.performance_results is None:
             self._set_table_placeholder(self.summary_table)
+            self._table_row_label.setText("— rows")
+            self._copy_btn.setEnabled(False)
+            self._copy_btn.setChecked(False)
             return
 
         element_rows = self.performance_results.get("element_rows", [])
         if not element_rows:
             self._set_table_placeholder(self.summary_table)
+            self._table_row_label.setText("0 elements")
+            self._copy_btn.setEnabled(False)
+            self._copy_btn.setChecked(False)
             return
 
         # ── Colour palette ─────────────────────────────────────────────
-        # Tier / status backgrounds
-        TIER_COLOURS = {
-            "High":   (C_SUCCESS,  "#FFFFFF"),
-            "Medium": (C_WARN,     "#1A1A1A"),
-            "Low":    (C_ERROR,    "#FFFFFF"),
-        }
-        STATUS_COLOURS = {
-            "Confirmed": (C_SUCCESS, "#FFFFFF"),
-            "Probable":  (C_WARN,    "#1A1A1A"),
-            "Uncertain": (C_ERROR,   "#FFFFFF"),
-        }
+        # All colours are theme-aware: dark theme uses vivid saturated
+        # backgrounds with white/dark-base text; light theme uses pastel
+        # tinted backgrounds with dark, readable foreground text.
+        if is_dark():
+            TIER_COLOURS = {
+                "High":   (C_SUCCESS, "#FFFFFF"),
+                "Medium": (C_WARN,    "#FFFFFF"),   # white on amber — was dark brown #1A1C10
+                "Low":    (C_ERROR,   "#FFFFFF"),
+            }
+            STATUS_COLOURS = {
+                "Confirmed": (C_SUCCESS, "#FFFFFF"),
+                "Probable":  (C_WARN,    "#FFFFFF"),  # white on amber — was dark brown
+                "Uncertain": (C_ERROR,   "#FFFFFF"),
+            }
+            # NA cells: no coloured background — just use the standard table
+            # text colour so they don't vanish into the dark table background.
+            _NA_CELL = ("", C_TEXT2)
+            _NA_VC   = ("", C_TEXT2)
 
-        def _vc_colour(vc: float | None) -> tuple[str, str]:
-            """Return (bg, fg) for a VC value."""
-            if vc is None:
-                return ("#2A2D3A", C_TEXT2)
-            v = float(vc)
-            if v >= 0.70:  return (C_SUCCESS, "#FFFFFF")
-            if v >= 0.50:  return (C_WARN,    "#1A1A1A")
-            if v >= 0.0:   return ("#2A3A2A",  C_TEXT2)
-            return              (C_ERROR,   "#FFFFFF")   # negative VC
+            def _vc_colour(vc):
+                if vc is None:         return _NA_VC
+                v = float(vc)
+                if v >= 0.70:          return (C_SUCCESS, "#FFFFFF")
+                if v >= 0.50:          return (C_WARN,    "#FFFFFF")  # was #1A1C10
+                if v >= 0.0:           return _NA_VC
+                return                        (C_ERROR,   "#FFFFFF")
 
-        def _delta_colour(d: float | None) -> tuple[str, str]:
-            """Green for tight match, yellow for moderate, red for loose."""
-            if d is None:
-                return ("#2A2D3A", C_TEXT2)
-            if d <= 0.05:  return (C_SUCCESS, "#FFFFFF")
-            if d <= 0.15:  return (C_WARN,    "#1A1A1A")
-            return              (C_ERROR,   "#FFFFFF")
+            def _delta_colour(d):
+                if d is None:          return _NA_CELL
+                if d <= 0.05:          return (C_SUCCESS, "#FFFFFF")
+                if d <= 0.15:          return (C_WARN,    "#FFFFFF")  # was #1A1C10
+                return                        (C_ERROR,   "#FFFFFF")
 
-        def _score_colour(s: float | None, max_s: float) -> tuple[str, str]:
-            """Relative colouring: top third green, middle yellow, bottom red."""
-            if s is None or max_s == 0:
-                return ("#2A2D3A", C_TEXT2)
-            ratio = s / max_s
-            if ratio >= 0.67:  return (C_SUCCESS, "#FFFFFF")
-            if ratio >= 0.33:  return (C_WARN,    "#1A1A1A")
-            return                  (C_ERROR,   "#FFFFFF")
+            def _score_colour(s, max_s):
+                if s is None or max_s == 0: return _NA_CELL
+                r = s / max_s
+                if r >= 0.67:          return (C_SUCCESS, "#FFFFFF")
+                if r >= 0.33:          return (C_WARN,    "#FFFFFF")  # was #1A1C10
+                return                        (C_ERROR,   "#FFFFFF")
 
-        def _matched_colour(n: int) -> tuple[str, str]:
-            if n >= 10:  return (C_SUCCESS, "#FFFFFF")
-            if n >= 3:   return (C_WARN,    "#1A1A1A")
-            return            (C_ERROR,   "#FFFFFF")
+            def _matched_colour(n):
+                if n >= 10:            return (C_SUCCESS, "#FFFFFF")
+                if n >= 3:             return (C_WARN,    "#FFFFFF")  # was #1A1C10
+                return                        (C_ERROR,   "#FFFFFF")
+        else:
+            # Light theme — pastel tinted backgrounds, dark text
+            TIER_COLOURS = {
+                "High":   ("#C6F4DE", "#0D6B3A"),
+                "Medium": ("#FDF0C2", "#7A4F00"),
+                "Low":    ("#FAD4DA", "#8B001A"),
+            }
+            STATUS_COLOURS = {
+                "Confirmed": ("#C6F4DE", "#0D6B3A"),
+                "Probable":  ("#FDF0C2", "#7A4F00"),
+                "Uncertain": ("#FAD4DA", "#8B001A"),
+            }
+            _NA_CELL = (L_BG_RAISED, L_TEXT2)
+
+            def _vc_colour(vc):
+                if vc is None:         return _NA_CELL
+                v = float(vc)
+                if v >= 0.70:          return ("#C6F4DE", "#0D6B3A")
+                if v >= 0.50:          return ("#FDF0C2", "#7A4F00")
+                if v >= 0.0:           return _NA_CELL
+                return                        ("#FAD4DA", "#8B001A")
+
+            def _delta_colour(d):
+                if d is None:          return _NA_CELL
+                if d <= 0.05:          return ("#C6F4DE", "#0D6B3A")
+                if d <= 0.15:          return ("#FDF0C2", "#7A4F00")
+                return                        ("#FAD4DA", "#8B001A")
+
+            def _score_colour(s, max_s):
+                if s is None or max_s == 0: return _NA_CELL
+                r = s / max_s
+                if r >= 0.67:          return ("#C6F4DE", "#0D6B3A")
+                if r >= 0.33:          return ("#FDF0C2", "#7A4F00")
+                return                        ("#FAD4DA", "#8B001A")
+
+            def _matched_colour(n):
+                if n >= 10:            return ("#C6F4DE", "#0D6B3A")
+                if n >= 3:             return ("#FDF0C2", "#7A4F00")
+                return                        ("#FAD4DA", "#8B001A")
 
         def _coloured_item(text: str, bg: str, fg: str) -> QTableWidgetItem:
             item = QTableWidgetItem(text)
-            item.setBackground(QColor(bg))
+            if bg:
+                item.setBackground(QColor(bg))
             item.setForeground(QColor(fg))
             item.setTextAlignment(
                 Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
@@ -679,6 +922,12 @@ class Step6Widget(QWidget):
         self.summary_table.setSortingEnabled(True)
         self.summary_table.resizeRowsToContents()
 
+        # Update toolbar
+        n = len(element_rows)
+        self._table_row_label.setText(f"{n} element{'s' if n != 1 else ''}")
+        self._copy_btn.setEnabled(True)
+        self._copy_btn.setChecked(False)
+
     @staticmethod
     def _set_table_placeholder(table: QTableWidget) -> None:
         """Display a single 'Run Steps 2–5 first' placeholder row."""
@@ -713,10 +962,67 @@ class Step6Widget(QWidget):
         self.info_label.setStyleSheet(instruction_banner_style())
         self.reload_button.setStyleSheet(secondary_button_style())
         self.clear_button.setStyleSheet(secondary_button_style())
+        # Restyle all navigation toolbars so icons are visible in light theme
+        for tb in [self.toolbar7, self.toolbar11, self.toolbar12, self.toolbar14]:
+            style_toolbar(tb)
+
+        # Re-populate the summary table and refresh charts for the active theme
+        if self.performance_results is not None:
+            self._update_charts()
+            self._populate_summary_table()
+        else:
+            self._reset_chart_placeholders()
+            self.summary_table.viewport().update()
 
     # ------------------------------------------------------------------
     # Export handlers (Task 5.7)
     # ------------------------------------------------------------------
+
+    def _on_copy_table_clicked(self) -> None:
+        """Copy all visible table rows to the clipboard as TSV.
+
+        The button is checkable: pressing once copies and highlights the
+        action (checked state); pressing again clears the selection and
+        resets to unchecked.
+        """
+        t = self.summary_table
+        rows = t.rowCount()
+        cols = t.columnCount()
+
+        if not self._copy_btn.isChecked():
+            # Second press — just deselect everything and reset label
+            t.clearSelection()
+            self._copy_btn.setText("⎘  Copy Table")
+            return
+
+        if rows == 0:
+            self._copy_btn.setChecked(False)
+            return
+
+        # Build header row
+        headers = [
+            t.horizontalHeaderItem(c).text() if t.horizontalHeaderItem(c) else ""
+            for c in range(cols)
+        ]
+        lines = ["\t".join(headers)]
+
+        # Build data rows (plain text, no colour info)
+        for r in range(rows):
+            row_cells = []
+            for c in range(cols):
+                item = t.item(r, c)
+                row_cells.append(item.text() if item else "")
+            lines.append("\t".join(row_cells))
+
+        tsv = "\n".join(lines)
+        QApplication.clipboard().setText(tsv)
+
+        # Visual feedback — briefly update button label
+        self._copy_btn.setText("✓  Copied!")
+        self._table_row_label.setText(
+            f"{rows} element{'s' if rows != 1 else ''}  ·  copied to clipboard"
+        )
+
 
     def _on_export_csv_clicked(self) -> None:
         """Export Step 6 summary as CSV."""

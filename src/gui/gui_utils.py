@@ -10,16 +10,17 @@ import os
 import io
 import logging
 from pathlib import Path
-from typing import Callable, Any
+from typing import Callable, Any, Optional, List
 
 import numpy as np
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QRectF
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QDoubleSpinBox,
     QSlider, QFileDialog, QMessageBox, QProgressDialog, QPushButton, QComboBox,
-    QPlainTextEdit, QMenu, QToolButton,
+    QPlainTextEdit, QMenu, QToolButton, QStyledItemDelegate, QStyle,
+    QAbstractItemView, QApplication,
 )
-from PyQt6.QtGui import QFont, QAction, QIcon, QPixmap
+from PyQt6.QtGui import QFont, QAction, QIcon, QPixmap, QPalette, QColor, QPainter, QPen, QConicalGradient
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as _NavigationToolbar2QT
 from matplotlib.figure import Figure
@@ -28,6 +29,8 @@ from src import setup_logger
 from src.gui.theme import (
     C_BG_BASE, C_BG_RAISED, C_BG_PANEL, C_BORDER_SUBTLE,
     C_ACCENT, C_ACCENT2, C_WARN, C_TEXT, C_TEXT2, C_TEXT_MUTED,
+    L_BG_RAISED, L_BG_INPUT, L_BORDER_SUBTLE, L_BORDER, L_TEXT, L_ACCENT,
+    L_ROW_HOVER,
 )
 
 logger = setup_logger(__name__)
@@ -175,6 +178,87 @@ def show_about_dialog(parent: QWidget = None) -> None:
     dialog.exec()
 
 # ---------------------------------------------------------------------------
+# Toolbar theme helper
+# ---------------------------------------------------------------------------
+
+def style_toolbar(toolbar: "_NavigationToolbar2QT") -> None:
+    """Apply a theme-aware style to a matplotlib NavigationToolbar2QT instance.
+
+    Matplotlib's NavigationToolbar2QT renders its icons by colorizing SVG/PNG
+    images using the QPalette ButtonText role.  Setting only a stylesheet
+    color is not enough — we must also set the palette so Qt uses a dark ink
+    color for the icons.  Without this the icons are nearly invisible in light
+    mode (light-grey on light-grey).
+    """
+    from src.gui.theme import is_dark
+
+    if is_dark():
+        # Dark theme — keep existing dark look
+        bg_hex      = C_BG_RAISED
+        icon_hex    = C_TEXT2        # mid-grey — works on dark bg
+        hover_hex   = "rgba(63,169,245,0.15)"
+        pressed_hex = "rgba(63,169,245,0.30)"
+        checked_hex = "rgba(63,169,245,0.25)"
+        border_hex  = C_BORDER_SUBTLE
+        accent_hex  = C_ACCENT
+    else:
+        
+        # Light theme — use a noticeably grey background and very dark icons
+        bg_hex      = "#12141A"
+        icon_hex    = "#E6EAF2"
+        hover_hex   = "#20242D"
+        pressed_hex = "#2A303B"
+        checked_hex = "#303846"
+        border_hex  = "#363C48"
+        accent_hex  = L_ACCENT
+
+    # ── Stylesheet — background, hover, pressed, checked ──────────────────
+    toolbar.setStyleSheet(
+        f"QToolBar, QWidget {{"
+        f"  background-color: {bg_hex};"
+        f"  border-top: 1px solid {border_hex};"
+        f"}}"
+        f"QToolButton {{"
+        f"  background-color: transparent;"
+        f"  border: 1px solid transparent;"
+        f"  border-radius: 4px;"
+        f"  padding: 3px;"
+        f"  margin: 1px;"
+        f"}}"
+        f"QToolButton:hover {{"
+        f"  background-color: {hover_hex};"
+        f"  border-color: {border_hex};"
+        f"}}"
+        f"QToolButton:pressed {{"
+        f"  background-color: {pressed_hex};"
+        f"  border-color: {accent_hex};"
+        f"}}"
+        f"QToolButton:checked {{"
+        f"  background-color: {checked_hex};"
+        f"  border-color: {accent_hex};"
+        f"}}"
+    )
+
+    # ── Palette — controls how Qt colorizes the actual icon pixels ─────────
+    pal = toolbar.palette()
+    icon_color = QColor(icon_hex)
+    bg_color   = QColor(bg_hex)
+    pal.setColor(QPalette.ColorRole.ButtonText,   icon_color)
+    pal.setColor(QPalette.ColorRole.WindowText,   icon_color)
+    pal.setColor(QPalette.ColorRole.Text,         icon_color)
+    pal.setColor(QPalette.ColorRole.Button,       bg_color)
+    pal.setColor(QPalette.ColorRole.Window,       bg_color)
+    toolbar.setPalette(pal)
+    toolbar.setAutoFillBackground(True)
+
+    # Force all child QToolButtons to inherit the same palette so their
+    # icons also pick up the dark ink color
+    for btn in toolbar.findChildren(QToolButton):
+        btn.setPalette(pal)
+        btn.setAutoFillBackground(False)
+
+
+# ---------------------------------------------------------------------------
 # High-DPI save toolbar
 # ---------------------------------------------------------------------------
 
@@ -192,6 +276,10 @@ class HighDpiToolbar(_NavigationToolbar2QT):
 
     EXPORT_DPI   = 300
     EXPORT_SCALE = 2.0
+
+    def __init__(self, canvas, parent=None):
+        super().__init__(canvas, parent)
+        style_toolbar(self)
 
     def save_figure(self, *args):
         import os
@@ -238,16 +326,31 @@ class HighDpiToolbar(_NavigationToolbar2QT):
                                     orig_size[1] * self.EXPORT_SCALE,
                                     forward=False)
                 with mpl.rc_context({
-                    "lines.antialiased": True,
-                    "patch.antialiased": True,
-                    "text.antialiased":  True,
-                    "path.simplify":     False,
+                    "lines.antialiased":  True,
+                    "patch.antialiased":  True,
+                    "text.antialiased":   True,
+                    "path.simplify":      False,
                     "agg.path.chunksize": 0,
+                    # Larger labels for saved images (was: label=13, tick=11, title=14, legend=10)
+                    "axes.labelsize":     15,
+                    "xtick.labelsize":    13,
+                    "ytick.labelsize":    13,
+                    "axes.titlesize":     16,
+                    "legend.fontsize":    12,
                 }):
                     fig.savefig(fname, dpi=self.EXPORT_DPI,
-                                bbox_inches="tight", pad_inches=0.15)
+                                bbox_inches="tight", pad_inches=0.2)
             else:
-                fig.savefig(fname, bbox_inches="tight", pad_inches=0.15)
+                # Vector formats: boost label sizes for readability too
+                with mpl.rc_context({
+                    # Larger labels for saved images (was: label=13, tick=11, title=14, legend=10)
+                    "axes.labelsize":  15,
+                    "xtick.labelsize": 13,
+                    "ytick.labelsize": 13,
+                    "axes.titlesize":  16,
+                    "legend.fontsize": 12,
+                }):
+                    fig.savefig(fname, bbox_inches="tight", pad_inches=0.2)
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(
@@ -258,6 +361,126 @@ class HighDpiToolbar(_NavigationToolbar2QT):
             fig.set_size_inches(orig_size[0], orig_size[1], forward=False)
             fig.set_dpi(orig_dpi)
             self.canvas.draw_idle()
+
+
+# ---------------------------------------------------------------------------
+# Theme-switch overlay
+# ---------------------------------------------------------------------------
+
+class ThemeSwitchOverlay(QWidget):
+    """Full-window semi-transparent overlay shown while the theme is switching.
+
+    Displays a spinning arc progress indicator and a short status message so
+    the user gets immediate feedback that the UI is responding rather than
+    frozen.  Call :meth:`show_over` to attach it to a parent window, and
+    :meth:`finish` to dismiss it once the switch is complete.
+
+    Usage (inside the main window)::
+
+        self._theme_overlay = ThemeSwitchOverlay(self)
+        self._theme_overlay.show_over(self, "Switching to Light Theme…")
+        QApplication.processEvents()          # let Qt paint the overlay
+        # … do the heavy theme work …
+        self._theme_overlay.finish()
+    """
+
+    _ARC_SIZE   = 56     # diameter of the spinner ring (px)
+    _ARC_WIDTH  =  5     # pen width of the ring
+    _SPIN_STEP  = 12     # degrees advanced per timer tick
+    _TICK_MS    = 30     # timer interval in milliseconds
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+
+        self._angle   = 0      # current start angle of the arc (degrees × 16 for Qt)
+        self._label   = ""
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(self._TICK_MS)
+        self._timer.timeout.connect(self._tick)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def show_over(self, window: QWidget, message: str = "Switching theme…") -> None:
+        """Resize to cover *window* and make visible."""
+        self._label = message
+        self._angle = 0
+        self.setParent(window)
+        self.resize(window.size())
+        self.raise_()
+        self.show()
+        self._timer.start()
+
+    def finish(self) -> None:
+        """Stop the spinner and hide the overlay."""
+        self._timer.stop()
+        self.hide()
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _tick(self) -> None:
+        self._angle = (self._angle + self._SPIN_STEP) % 360
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        from src.gui.theme import is_dark
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # ── Background scrim ──────────────────────────────────────────
+        scrim = QColor(15, 16, 22, 210) if is_dark() else QColor(240, 242, 248, 210)
+        painter.fillRect(self.rect(), scrim)
+
+        cx = self.width()  // 2
+        cy = self.height() // 2
+        r  = self._ARC_SIZE // 2
+
+        # ── Spinner ring (track) ──────────────────────────────────────
+        track_col = QColor(80, 90, 120, 100) if is_dark() else QColor(180, 190, 210, 140)
+        pen = QPen(track_col, self._ARC_WIDTH, Qt.PenStyle.SolidLine,
+                   Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        rect = QRectF(cx - r, cy - r, self._ARC_SIZE, self._ARC_SIZE)
+        painter.drawEllipse(rect)
+
+        # ── Spinner arc (progress) ────────────────────────────────────
+        arc_col = QColor("#3FA9F5") if is_dark() else QColor("#2A7FCC")
+        pen.setColor(arc_col)
+        painter.setPen(pen)
+        # Qt angles: 0° = 3 o'clock, positive = counter-clockwise
+        # We want clockwise rotation so negate the angle.
+        start_angle = (90 - self._angle) * 16   # 12 o'clock start, rotating CW
+        span_angle  = -120 * 16                  # 120° arc sweep
+        painter.drawArc(rect, start_angle, span_angle)
+
+        # ── Label ─────────────────────────────────────────────────────
+        text_col = QColor("#F0F2F5") if is_dark() else QColor("#1A1C24")
+        painter.setPen(QPen(text_col))
+        font = painter.font()
+        font.setFamily("Segoe UI")
+        font.setPointSize(10)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.drawText(
+            0, cy + r + 18, self.width(), 28,
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+            self._label,
+        )
+
+        painter.end()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        """Keep overlay covering the full parent window if it resizes."""
+        if self.parent():
+            self.resize(self.parent().size())
+        super().resizeEvent(event)
 
 
 class WorkerThread(QThread):
@@ -474,6 +697,203 @@ class MatplotlibCanvas(FigureCanvas):
         self.axes.clear()
         self._apply_dark_style()
         self.draw()
+
+
+class PeakHoverAnnotator:
+    """
+    Attaches an interactive hover tooltip and highlight ring to scatter peaks on a Matplotlib Axes.
+
+    Shows exact (x, y) coordinates and physical labels (e.g. wavelength in nm and intensity)
+    when the mouse cursor hovers within a configurable pixel radius of any peak marker.
+    """
+
+    def __init__(
+        self,
+        canvas: FigureCanvas,
+        radius_px: float = 14.0,
+        x_unit: str = "nm",
+        x_name: str = "Wavelength",
+        y_name: str = "Intensity",
+    ):
+        self.canvas = canvas
+        self.radius_px = radius_px
+        self.x_unit = x_unit
+        self.x_name = x_name
+        self.y_name = y_name
+
+        self.ax: Optional[Any] = None
+        self._peak_x: Optional[np.ndarray] = None
+        self._peak_y: Optional[np.ndarray] = None
+        self._extra_info: Optional[List[str]] = None
+        self._current_idx: Optional[int] = None
+
+        self._annot = None
+        self._highlight = None
+
+        # Connect canvas events
+        self._cid_motion = self.canvas.mpl_connect("motion_notify_event", self._on_motion)
+        self._cid_leave = self.canvas.mpl_connect("figure_leave_event", self._on_leave)
+
+    def attach(
+        self,
+        ax: Any,
+        peak_x: np.ndarray | list[float],
+        peak_y: np.ndarray | list[float],
+        extra_info: Optional[List[str]] = None,
+    ) -> None:
+        """Attach peak coordinates and initialize artists on the given axes."""
+        self.ax = ax
+        self._peak_x = np.asarray(peak_x, dtype=float) if peak_x is not None else None
+        self._peak_y = np.asarray(peak_y, dtype=float) if peak_y is not None else None
+        self._extra_info = extra_info
+        self._current_idx = None
+
+        from src.gui.theme import (
+            get_chart_axes_bg, get_chart_text, is_dark, C_ACCENT, L_ACCENT
+        )
+        accent = C_ACCENT if is_dark() else L_ACCENT
+
+        self._annot = self.ax.annotate(
+            "",
+            xy=(0, 0),
+            xytext=(14, 14),
+            textcoords="offset points",
+            bbox=dict(
+                boxstyle="round,pad=0.5",
+                facecolor=get_chart_axes_bg(),
+                edgecolor=accent,
+                linewidth=1.2,
+                alpha=0.95,
+            ),
+            arrowprops=dict(
+                arrowstyle="->",
+                connectionstyle="arc3,rad=0",
+                color=accent,
+                linewidth=1.2,
+            ),
+            fontsize=9,
+            fontweight="bold",
+            color=get_chart_text(),
+            zorder=25,
+        )
+        self._annot.set_visible(False)
+
+        self._highlight, = self.ax.plot(
+            [], [],
+            marker="o",
+            markersize=10,
+            markeredgecolor=accent,
+            markerfacecolor="none",
+            markeredgewidth=2.0,
+            linestyle="none",
+            zorder=24,
+        )
+        self._highlight.set_visible(False)
+
+    def update_theme(self) -> None:
+        """Update colors of the annotation and highlight ring to match active theme."""
+        if self._annot is None or self._highlight is None:
+            return
+        from src.gui.theme import (
+            get_chart_axes_bg, get_chart_text, is_dark, C_ACCENT, L_ACCENT
+        )
+        accent = C_ACCENT if is_dark() else L_ACCENT
+        try:
+            self._annot.get_bbox_patch().set_facecolor(get_chart_axes_bg())
+            self._annot.get_bbox_patch().set_edgecolor(accent)
+            self._annot.arrowprops['color'] = accent
+            self._annot.set_color(get_chart_text())
+            self._highlight.set_markeredgecolor(accent)
+        except Exception:
+            pass
+
+    def clear(self) -> None:
+        """Clear data and hide annotations."""
+        self._peak_x = None
+        self._peak_y = None
+        self._extra_info = None
+        self._current_idx = None
+        if self._annot is not None:
+            self._annot.set_visible(False)
+        if self._highlight is not None:
+            self._highlight.set_visible(False)
+
+    def _on_motion(self, event) -> None:
+        if (
+            self.ax is None
+            or event.inaxes != self.ax
+            or self._peak_x is None
+            or len(self._peak_x) == 0
+            or self._annot is None
+            or self._highlight is None
+        ):
+            self._hide()
+            return
+
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
+        mask = (
+            (self._peak_x >= xlim[0]) & (self._peak_x <= xlim[1]) &
+            (self._peak_y >= ylim[0]) & (self._peak_y <= ylim[1])
+        )
+        if not np.any(mask):
+            self._hide()
+            return
+
+        vis_indices = np.where(mask)[0]
+        pts = self.ax.transData.transform(
+            np.column_stack([self._peak_x[mask], self._peak_y[mask]])
+        )
+        dists = np.hypot(pts[:, 0] - event.x, pts[:, 1] - event.y)
+        min_sub = int(np.argmin(dists))
+
+        if dists[min_sub] <= self.radius_px:
+            target_idx = int(vis_indices[min_sub])
+            self._show_peak(target_idx, pts[min_sub])
+        else:
+            self._hide()
+
+    def _show_peak(self, idx: int, disp_pt: np.ndarray) -> None:
+        if self._current_idx == idx:
+            return  # already showing this peak, avoid redraw
+
+        self._current_idx = idx
+        x_val = float(self._peak_x[idx])
+        y_val = float(self._peak_y[idx])
+
+        # Dynamic flip if near canvas edges
+        bbox = self.ax.bbox
+        offset_x = -135 if disp_pt[0] > (bbox.xmax - 120) else 14
+        offset_y = -55 if disp_pt[1] > (bbox.ymax - 60) else 14
+
+        extra = f"\n{self._extra_info[idx]}" if self._extra_info and idx < len(self._extra_info) else ""
+        unit_str = f" {self.x_unit}" if self.x_unit else ""
+        text = (
+            f"({x_val:.2f}, {y_val:.2f})\n"
+            f"{self.x_name}: {x_val:.2f}{unit_str}\n"
+            f"{self.y_name}: {y_val:.2f}{extra}"
+        )
+
+        self._annot.xy = (x_val, y_val)
+        self._annot.xyann = (offset_x, offset_y)
+        self._annot.set_text(text)
+        self._annot.set_visible(True)
+
+        self._highlight.set_data([x_val], [y_val])
+        self._highlight.set_visible(True)
+        self.canvas.draw_idle()
+
+    def _hide(self) -> None:
+        if self._current_idx is not None:
+            self._current_idx = None
+            if self._annot is not None:
+                self._annot.set_visible(False)
+            if self._highlight is not None:
+                self._highlight.set_visible(False)
+            self.canvas.draw_idle()
+
+    def _on_leave(self, event) -> None:
+        self._hide()
 
 
 class FileSelector(QWidget):
@@ -1045,3 +1465,191 @@ class FileSelectorWithHistory(QWidget):
     def get_filepath(self) -> Path:
         """Get selected file path."""
         return self.filepath
+
+
+# ---------------------------------------------------------------------------
+# Foreground-respecting item delegate
+# ---------------------------------------------------------------------------
+
+class ForegroundDelegate(QStyledItemDelegate):
+    """Item delegate that always honours the item's ForegroundRole colour.
+
+    Qt's global stylesheet (``QWidget { color: … }``) cascades into table
+    cells and silently overrides ``setForeground()`` for the normal (not
+    hovered, not selected) state.  This delegate reads the ForegroundRole
+    directly from the model and paints the text with that colour, so coloured
+    cells (e.g. Quality tier badges) are always legible regardless of the
+    active stylesheet theme.
+    """
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        fg = index.data(Qt.ItemDataRole.ForegroundRole)
+        if fg is not None:
+            # fg is a QBrush; extract the colour and override the palette entry
+            # that the style uses to draw the display text.
+            colour = fg.color() if hasattr(fg, "color") else QColor(fg)
+            option.palette.setColor(option.palette.ColorRole.Text, colour)
+            # Also override the highlighted-text colour so selected rows keep
+            # a readable foreground (white on accent background).
+            option.palette.setColor(
+                option.palette.ColorRole.HighlightedText, QColor("#FFFFFF")
+            )
+
+
+# ---------------------------------------------------------------------------
+# Copy-table toolbar utility
+# ---------------------------------------------------------------------------
+
+def make_table_toolbar(
+    table: "QTableWidget",  # noqa: F821  (forward ref, QTableWidget imported at call site)
+    *,
+    row_label_text: str = "— rows",
+) -> "tuple[QWidget, QPushButton, QLabel]":
+    """Create a slim toolbar bar for a table with a row-count label and copy toggle.
+
+    Returns
+    -------
+    container : QWidget
+        A ``QWidget`` with a ``QVBoxLayout`` containing *toolbar* (fixed 34 px
+        height) above *table*.  Add this container wherever the raw table used
+        to be placed.
+    copy_btn : QPushButton
+        The checkable copy button.  Connect to :func:`on_copy_table_clicked`
+        or your own handler.
+    row_label : QLabel
+        The label showing row count.  Update its text after populating the table.
+
+    The caller is responsible for:
+    * Updating ``row_label.setText(...)`` after data is loaded.
+    * Enabling/disabling ``copy_btn`` as appropriate.
+    * Connecting ``copy_btn.clicked`` to :func:`on_copy_table_clicked` or a custom slot.
+    """
+    from src.gui.theme import (
+        C_BG_BASE, C_BG_RAISED, C_BG_INPUT, C_BORDER, C_ACCENT,
+        C_TEXT, C_TEXT2, C_TEXT_MUTED,
+    )
+
+    # ── Toolbar strip ──────────────────────────────────────────────────
+    toolbar = QWidget()
+    toolbar.setFixedHeight(34)
+    toolbar.setStyleSheet(
+        f"background-color: {C_BG_RAISED}; border-bottom: 1px solid {C_BORDER};"
+    )
+    tb_layout = QHBoxLayout(toolbar)
+    tb_layout.setContentsMargins(8, 0, 8, 0)
+    tb_layout.setSpacing(8)
+
+    row_label = QLabel(row_label_text)
+    row_label.setStyleSheet(
+        f"color: {C_TEXT2}; font-size: 9pt; background: transparent; border: none;"
+    )
+    tb_layout.addWidget(row_label)
+    tb_layout.addStretch()
+
+    copy_btn = QPushButton("⎘  Copy")
+    copy_btn.setCheckable(True)
+    copy_btn.setFixedHeight(24)
+    copy_btn.setToolTip(
+        "Copy all rows as tab-separated values to clipboard.\n"
+        "Click again to deselect."
+    )
+    copy_btn.setStyleSheet(f"""
+QPushButton {{
+    background-color: {C_BG_INPUT};
+    color: {C_TEXT2};
+    border: 1px solid {C_BORDER};
+    border-radius: 4px;
+    padding: 0 10px;
+    font-size: 9pt;
+}}
+QPushButton:hover {{
+    background-color: {C_BG_RAISED};
+    color: {C_TEXT};
+    border-color: {C_ACCENT};
+}}
+QPushButton:checked {{
+    background-color: {C_ACCENT};
+    color: #ffffff;
+    border-color: {C_ACCENT};
+}}
+QPushButton:disabled {{
+    color: {C_TEXT_MUTED};
+    border-color: {C_BORDER};
+    background-color: {C_BG_BASE};
+}}
+""")
+    copy_btn.setEnabled(False)
+    tb_layout.addWidget(copy_btn)
+
+    # ── Container ──────────────────────────────────────────────────────
+    container = QWidget()
+    cl = QVBoxLayout(container)
+    cl.setContentsMargins(0, 0, 0, 0)
+    cl.setSpacing(0)
+    cl.addWidget(toolbar)
+    cl.addWidget(table)
+
+    return container, copy_btn, row_label
+
+
+def on_copy_table_clicked(
+    table: "QTableWidget",  # noqa: F821
+    copy_btn: QPushButton,
+    row_label: QLabel,
+    *,
+    base_label: str = "",
+) -> None:
+    """Handle the copy toggle button click for any table.
+
+    Pass this as the ``clicked`` slot (via ``lambda``) from any widget.
+
+    Parameters
+    ----------
+    table      : the QTableWidget whose data should be copied.
+    copy_btn   : the checkable QPushButton that triggered the click.
+    row_label  : the row-count QLabel in the toolbar (updated on copy).
+    base_label : base text for row_label (e.g. "12 rows").  When empty the
+                 current label text up to " ·" is kept.
+    """
+    from PyQt6.QtWidgets import QApplication
+
+    rows = table.rowCount()
+    cols = table.columnCount()
+
+    if not copy_btn.isChecked():
+        # Second press — deselect and reset
+        table.clearSelection()
+        copy_btn.setText("⎘  Copy")
+        if base_label:
+            row_label.setText(base_label)
+        else:
+            # Trim the "· copied" suffix if present
+            current = row_label.text()
+            row_label.setText(current.split(" ·")[0])
+        return
+
+    if rows == 0:
+        copy_btn.setChecked(False)
+        return
+
+    # Build TSV
+    headers = [
+        (table.horizontalHeaderItem(c).text()
+         if table.horizontalHeaderItem(c) else "")
+        for c in range(cols)
+    ]
+    lines = ["\t".join(headers)]
+    for r in range(rows):
+        row_cells = []
+        for c in range(cols):
+            item = table.item(r, c)
+            row_cells.append(item.text() if item else "")
+        lines.append("\t".join(row_cells))
+
+    QApplication.clipboard().setText("\n".join(lines))
+
+    copy_btn.setText("✓  Copied!")
+    # Update label
+    current_base = base_label or row_label.text().split(" ·")[0]
+    row_label.setText(f"{current_base}  ·  copied to clipboard")

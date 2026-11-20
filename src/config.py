@@ -47,6 +47,24 @@ STEP4_PARAMS = {
 }
 
 # ==========================================
+# UPRSA: UNASSIGNED PEAK RECOVERY & ATTRIBUTION
+# ==========================================
+UPRSA_PARAMS = {
+    'WAVELENGTH_TOLERANCE': 0.05,       # nm: tolerance for matching detected to confirmed
+    'LOCAL_WINDOW': 2.0,                # nm: local spectral window for background & noise
+    'PEAK_GUARD': 0.08,                 # nm: exclusion zone around peak for background
+    'MIN_LOCAL_POINTS': 5,              # minimum data points in local background window
+    'WEIGHT_INTENSITY': 0.30,           # PQI weight for normalized intensity
+    'WEIGHT_SNR': 0.40,                 # PQI weight for normalized SNR
+    'WEIGHT_PROMINENCE': 0.30,          # PQI weight for normalized prominence
+    'ACCEPTANCE_THRESHOLD': 0.60,       # PQI threshold: >= 0.60 accepted, < 0.60 rejected
+    'CONTINUOUS_PEAK_TOLERANCE': 0.15,  # nm: tolerance for matching continuous spectrum peak
+    'NUMBER_OF_REJECTED_TO_PLOT': 20,   # number of representative rejected peaks to plot
+    'PROFILE_HALF_WIDTH': 2.0,          # nm: half-width for line profile inspection
+    'NOISE_MULTIPLIER': 1.0,            # noise band multiplier (background +/- multiplier * noise)
+}
+
+# ==========================================
 # STEP 5: VALIDATION WITH REFERENCE SPECTRA
 # ==========================================
 STEP5_PARAMS = {

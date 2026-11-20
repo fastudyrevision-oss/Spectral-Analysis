@@ -21,10 +21,6 @@ Results from each step are **automatically passed to the next step** in memory �
 
 ## Screenshots
 
-| Dark Theme | Light Theme |
-|-----------|------------|
-| Step 1 — Baseline Correction | Analysis Summary Dashboard |
-
 *(Screenshots can be found in `data/sample_outputs/`)*
 
 ---
@@ -33,11 +29,8 @@ Results from each step are **automatically passed to the next step** in memory �
 
 ### Standalone EXE (Windows, no Python required)
 
-```
-dist/LIBS_Analysis/LIBS_Analysis.exe
-```
-
-Double-click to launch. No installation needed.
+Download the latest `LIBS_Spectral_Analysis_Setup_*.exe` from the [GitHub Releases](../../releases) page and run it as Administrator.  
+A portable ZIP (`LIBS_Analysis_Portable.zip`) is also available — extract and double-click `LIBS_Analysis.exe`.
 
 ### From Source
 
@@ -268,6 +261,18 @@ VC = Pearson correlation(normalised processed, interpolated reference)
 | Moderate | 0.50 – 0.69 |
 | Weak | < 0.50 |
 | Failed | NaN (insufficient data) |
+
+---
+
+## Roadmap / Known Improvement Areas
+
+- **Multi-spectrum batch processing** — currently processes one spectrum at a time
+- **GPU/CUDA acceleration** — ALS and peak detection are CPU-bound; GPU could reduce latency on long scans
+- **Machine-learning element identification** — replace pure scoring with a trained classifier (e.g. XGBoost or neural net on Aki/Δλ/intensity features)
+- **Concentration quantification** — calibration curves and univariate/multivariate calibration (PLS, PCR) are not yet implemented
+- **Plasma temperature / electron density** — Boltzmann-plot and Stark-broadening analysis are future steps
+- **macOS / Linux packaging** — CI currently builds Windows only; `.dmg` and `AppImage` targets are pending
+- **Real-time acquisition mode** — direct interface to spectrometer hardware (e.g. Ocean Optics SDK) for live processing
 
 ---
 

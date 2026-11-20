@@ -56,7 +56,7 @@ C_SUCCESS    = "#3DDC97"
 
 C_TEXT       = "#F0F2F5"
 C_TEXT2      = "#AEB7C4"
-C_TEXT_MUTED = "#6B7589"
+C_TEXT_MUTED = "#7E8B9F"
 
 C_HOVER      = "rgba(63,169,245,0.08)"
 C_PRESSED    = "rgba(63,169,245,0.18)"
@@ -104,13 +104,13 @@ QTabWidget::pane {{
 }}
 
 QTabBar {{
-    background-color: #FFFFFF;
+    background-color: {C_BG_BASE};
     qproperty-drawBase: 0;
 }}
 
 QTabBar::tab {{
-    background-color: #FFFFFF;
-    color: #2A2D3A;
+    background-color: {C_BG_BASE};
+    color: {C_TEXT2};
     border: none;
     border-bottom: 3px solid transparent;
     padding: 9px 20px 8px 20px;
@@ -121,7 +121,7 @@ QTabBar::tab {{
 }}
 
 QTabBar::tab:selected {{
-    background-color: #FFFFFF;
+    background-color: {C_BG_PANEL};
     color: {C_ACCENT};
     border-bottom: 3px solid {C_ACCENT};
     font-weight: 700;
@@ -129,9 +129,9 @@ QTabBar::tab:selected {{
 }}
 
 QTabBar::tab:hover:!selected {{
-    background-color: #EEF2FF;
-    color: #1A1C24;
-    border-bottom: 3px solid #AABBDD;
+    background-color: {C_BG_RAISED};
+    color: {C_TEXT};
+    border-bottom: 3px solid #5A6485;
 }}
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -813,12 +813,12 @@ QTabWidget::pane {{
     border-top: 2px solid {L_BORDER};
 }}
 QTabBar {{
-    background-color: #1A1C24;
+    background-color: #E8ECF2;
     qproperty-drawBase: 0;
 }}
 QTabBar::tab {{
-    background-color: #1A1C24;
-    color: #D0D4E0;
+    background-color: #E8ECF2;
+    color: {L_TEXT2};
     border: none;
     border-bottom: 3px solid transparent;
     padding: 9px 20px 8px 20px;
@@ -828,16 +828,16 @@ QTabBar::tab {{
     min-width: 130px;
 }}
 QTabBar::tab:selected {{
-    background-color: #1A1C24;
+    background-color: {L_BG_PANEL};
     color: {L_ACCENT};
     border-bottom: 3px solid {L_ACCENT};
     font-weight: 700;
     font-size: 9pt;
 }}
 QTabBar::tab:hover:!selected {{
-    background-color: #2D3042;
-    color: #FFFFFF;
-    border-bottom: 3px solid #5566AA;
+    background-color: #DDE2EC;
+    color: {L_TEXT};
+    border-bottom: 3px solid #99AACC;
 }}
 
 QGroupBox {{
@@ -1098,5 +1098,41 @@ QListWidget::item:selected {{
     color: #ffffff;
 }}
 QListWidget::item:hover {{ background-color: {L_ROW_HOVER}; }}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MATPLOTLIB NAVIGATION TOOLBAR  — visible icons and buttons in light theme
+═══════════════════════════════════════════════════════════════════════ */
+
+QToolBar {{
+    background-color: #D8DCE6;
+    border: none;
+    border-top: 1px solid #A8AFBF;
+    spacing: 2px;
+    padding: 2px 4px;
+}}
+
+QToolBar QToolButton {{
+    background-color: transparent;
+    color: #1A1C24;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 3px;
+    margin: 1px;
+}}
+
+QToolBar QToolButton:hover {{
+    background-color: #BFCFE8;
+    border-color: #A8AFBF;
+}}
+
+QToolBar QToolButton:pressed {{
+    background-color: #A8C0E0;
+    border-color: {L_ACCENT};
+}}
+
+QToolBar QToolButton:checked {{
+    background-color: #C0D8F8;
+    border-color: {L_ACCENT};
+}}
 
 """

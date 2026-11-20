@@ -208,13 +208,13 @@ def export_step4_csv(
 
     written: list[Path] = []
     try:
-        ranking_df.to_csv(ranking_path, index=False)
+        ranking_df.to_csv(ranking_path, index=False, lineterminator='\n')
         written.append(ranking_path)
 
-        competition_df.to_csv(competition_path, index=False)
+        competition_df.to_csv(competition_path, index=False, lineterminator='\n')
         written.append(competition_path)
 
-        winner_lines_df.to_csv(winners_path, index=False)
+        winner_lines_df.to_csv(winners_path, index=False, lineterminator='\n')
         written.append(winners_path)
 
     except OSError:
@@ -253,7 +253,7 @@ def export_step5_csv(
     """
     filepath = Path(filepath)
     try:
-        validation_results_df.to_csv(filepath, index=False)
+        validation_results_df.to_csv(filepath, index=False, lineterminator='\n')
     except OSError:
         raise
     return filepath
@@ -697,11 +697,15 @@ def generate_pdf_report(
 # ---------------------------------------------------------------------------
 
 def export_step6_csv(performance_results, filepath):
-    """Write Step 6 summary CSV (one row per element + aggregate metrics).
+    """Write Step 6 summary CSV (one row per element).
 
-    Each row contains the element name, confidence tier, matched lines,
-    mean VC, global Accuracy/Precision/Recall/F1-Score, global
-    SBR_Improvement, and the five Pipeline_Stage counts.
+    Columns mirror the GUI summary table exactly:
+      Element, Confidence_Tier, Status, Matched_Lines, Mean_VC,
+      Avg_Delta_nm, Avg_Score, Best_Lines_nm
+
+    Global aggregate metrics (Accuracy, Precision, Recall, F1_Score,
+    SBR_Improvement) are appended as repeated columns on every row so
+    the full picture is captured in a single flat file.
 
     Requirements: 10.1
     """
@@ -710,48 +714,50 @@ def export_step6_csv(performance_results, filepath):
 
     filepath = Path(filepath)
 
+    # Derive the same Status label the GUI uses
+    _status_map = {"High": "Confirmed", "Medium": "Probable"}
+
     try:
         element_rows = performance_results.get("element_rows", []) or []
-        pipeline = performance_results.get("pipeline_stages") or {}
 
         rows = []
         for er in element_rows:
+            tier = er.get("confidence_tier", "")
+            best_wls = er.get("best_lines") or []
+            best_str = ", ".join(f"{w:.2f}" for w in best_wls) if best_wls else ""
+
             rows.append({
-                "Element": er.get("element", ""),
-                "Confidence_Tier": er.get("confidence_tier", ""),
-                "Matched_Lines": er.get("matched_lines", 0),
-                "Mean_VC": er.get("mean_vc"),
-                "Accuracy": performance_results.get("accuracy"),
-                "Precision": performance_results.get("precision"),
-                "Recall": performance_results.get("recall"),
-                "F1_Score": performance_results.get("f1_score"),
-                "SBR_Improvement": performance_results.get("sbr_improvement"),
-                "Pipeline_Stage_1": pipeline.get("stage1_detected", 0),
-                "Pipeline_Stage_2": pipeline.get("stage2_nist_matched", 0),
-                "Pipeline_Stage_3": pipeline.get("stage3_ranked", 0),
-                "Pipeline_Stage_4": pipeline.get("stage4_validated", 0),
-                "Pipeline_Stage_5": pipeline.get("stage5_confirmed", 0),
+                "Element":          er.get("element", ""),
+                "Confidence_Tier":  tier,
+                "Status":           _status_map.get(tier, "Uncertain"),
+                "Matched_Lines":    er.get("matched_lines", 0),
+                "Mean_VC":          er.get("mean_vc"),
+                "Avg_Delta_nm":     er.get("avg_delta"),
+                "Avg_Score":        er.get("avg_score"),
+                "Best_Lines_nm":    best_str,
+                # Global aggregate metrics repeated on each row
+                "Accuracy":         performance_results.get("accuracy"),
+                "Precision":        performance_results.get("precision"),
+                "Recall":           performance_results.get("recall"),
+                "F1_Score":         performance_results.get("f1_score"),
+                "SBR_Improvement":  performance_results.get("sbr_improvement"),
             })
 
         if not rows:
             # Write a header-only CSV if no element rows
             rows = [{
-                "Element": "", "Confidence_Tier": "", "Matched_Lines": 0,
-                "Mean_VC": None,
-                "Accuracy": performance_results.get("accuracy"),
-                "Precision": performance_results.get("precision"),
-                "Recall": performance_results.get("recall"),
-                "F1_Score": performance_results.get("f1_score"),
+                "Element": "", "Confidence_Tier": "", "Status": "",
+                "Matched_Lines": 0, "Mean_VC": None,
+                "Avg_Delta_nm": None, "Avg_Score": None, "Best_Lines_nm": "",
+                "Accuracy":        performance_results.get("accuracy"),
+                "Precision":       performance_results.get("precision"),
+                "Recall":          performance_results.get("recall"),
+                "F1_Score":        performance_results.get("f1_score"),
                 "SBR_Improvement": performance_results.get("sbr_improvement"),
-                "Pipeline_Stage_1": pipeline.get("stage1_detected", 0),
-                "Pipeline_Stage_2": pipeline.get("stage2_nist_matched", 0),
-                "Pipeline_Stage_3": pipeline.get("stage3_ranked", 0),
-                "Pipeline_Stage_4": pipeline.get("stage4_validated", 0),
-                "Pipeline_Stage_5": pipeline.get("stage5_confirmed", 0),
             }]
 
         df = pd.DataFrame(rows)
-        df.to_csv(filepath, index=False)
+        df.to_csv(filepath, index=False, lineterminator='\n')
         return filepath
     except OSError:
         # Remove partial file, then re-raise
@@ -830,3 +836,106 @@ def export_step6_png(figures, filepath, dpi=150):
             except Exception:
                 pass
         raise
+
+
+# ---------------------------------------------------------------------------
+# UPRSA Exports
+# ---------------------------------------------------------------------------
+
+def export_uprsa_csv(
+    uprsa_result,
+    directory: Path,
+    base: str = "UPRSA",
+) -> list[Path]:
+    """Write UPRSA results (all, accepted, rejected, summary) to CSV files.
+
+    Parameters
+    ----------
+    uprsa_result:
+        UPRSAResult object with df_all, df_accepted, df_rejected, df_summary.
+    directory:
+        Target directory for CSV files.
+    base:
+        Base filename prefix (defaults to "UPRSA").
+
+    Returns
+    -------
+    list[Path]
+        Paths of written CSV files.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    all_path = directory / f"{base}_All_Unassigned_Peaks.csv"
+    acc_path = directory / f"{base}_Accepted_Peaks.csv"
+    rej_path = directory / f"{base}_Rejected_Peaks.csv"
+    sum_path = directory / f"{base}_Summary.csv"
+
+    written: list[Path] = []
+    try:
+        if uprsa_result.df_all is not None:
+            uprsa_result.df_all.to_csv(all_path, index=False, lineterminator='\n')
+            written.append(all_path)
+
+        if uprsa_result.df_accepted is not None:
+            uprsa_result.df_accepted.to_csv(acc_path, index=False, lineterminator='\n')
+            written.append(acc_path)
+
+        if uprsa_result.df_rejected is not None:
+            uprsa_result.df_rejected.to_csv(rej_path, index=False, lineterminator='\n')
+            written.append(rej_path)
+
+        if uprsa_result.df_summary is not None:
+            uprsa_result.df_summary.to_csv(sum_path, index=False, lineterminator='\n')
+            written.append(sum_path)
+
+    except OSError:
+        for p in written:
+            p.unlink(missing_ok=True)
+        raise
+
+    return written
+
+
+def export_uprsa_png(
+    figures_dict: dict[str, Figure],
+    directory: Path,
+    base: str = "UPRSA",
+    dpi: int = 300,
+) -> list[Path]:
+    """Save UPRSA diagnostic charts as publication-ready PNG files.
+
+    Parameters
+    ----------
+    figures_dict:
+        Mapping of chart names to matplotlib Figures:
+        - "accepted_overview": All accepted peaks on spectrum
+        - "accepted_rejected": Accepted + representative rejected
+        - "pqi_distribution": PQI histogram with threshold
+        - "quality_map": SNR vs Prominence separation map
+        - "line_profiles": 3-panel representative line profiles
+    directory:
+        Target directory.
+    base:
+        Prefix for output files.
+    dpi:
+        Output DPI (default 300).
+
+    Returns
+    -------
+    list[Path]
+        List of written image paths.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+
+    for name, fig in figures_dict.items():
+        if fig is None:
+            continue
+        filepath = directory / f"{base}_{name}.png"
+        save_figure_png(fig, filepath, dpi=dpi)
+        written.append(filepath)
+
+    return written
+

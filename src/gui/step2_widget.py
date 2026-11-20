@@ -25,9 +25,12 @@ from src.io.file_reader import CSVReader
 from src.io.file_writer import CSVWriter, PlotGenerator
 from src.gui.gui_utils import (
     HighDpiToolbar as NavigationToolbar2QT,
+    style_toolbar,
     ParameterControl, FileSelector, WorkerThread,
     FileHistory, RecentFilesButton,
-    show_error, show_info
+    show_error, show_info,
+    on_copy_table_clicked,
+    PeakHoverAnnotator,
 )
 from src.gui.theme import (
     primary_button_style, instruction_banner_style, step_title_font,
@@ -117,8 +120,8 @@ class Step2Widget(QWidget):
             "   • Baseline Window: window size (points) for local noise estimation.\n"
             "   • Baseline K: noise sensitivity — higher K = fewer peaks detected.\n"
             "3. Click 'Detect Peaks' — results shown on plot and in table.\n"
-            "4. Click 'Save Results' to export the detected peaks CSV and plot PNG.\n"
-            "   The CSV is required as input for Step 3."
+            "4. Detected peaks are automatically forwarded to Step 3 and UPRSA in-memory.\n"
+            "   • Optional: Click 'Save Results' to export detected peaks CSV and plot PNG."
         )
         instructions.setWordWrap(True)
         instructions.setStyleSheet(instruction_banner_style())
@@ -254,6 +257,9 @@ class Step2Widget(QWidget):
         self.axes = self.fig.add_subplot(111)
         self._style_axes()
         self.toolbar = NavigationToolbar2QT(self.canvas)
+        self._hover_annotator = PeakHoverAnnotator(
+            self.canvas, radius_px=14.0, x_unit="nm", x_name="Wavelength", y_name="Intensity"
+        )
 
         chart_container = QWidget()
         chart_layout = QVBoxLayout(chart_container)
@@ -307,6 +313,19 @@ class Step2Widget(QWidget):
         self._table_count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         table_header.addWidget(self._table_count_label)
 
+        # Copy toggle — appended to the existing pagination row
+        self._table_copy_btn = QPushButton("⎘  Copy")
+        self._table_copy_btn.setCheckable(True)
+        self._table_copy_btn.setFixedHeight(24)
+        self._table_copy_btn.setEnabled(False)
+        self._table_copy_btn.setToolTip("Copy visible page as TSV to clipboard.\nClick again to deselect.")
+        self._table_copy_btn.clicked.connect(
+            lambda: on_copy_table_clicked(
+                self.table, self._table_copy_btn, self._table_count_label
+            )
+        )
+        table_header.addWidget(self._table_copy_btn)
+
         table_layout.addLayout(table_header)
         table_layout.addWidget(self.table)
         self.view_tabs.addTab(table_container, "📋 Data Table")
@@ -319,7 +338,7 @@ class Step2Widget(QWidget):
         """Apply current theme to the axes."""
         ax = self.axes
         ax.set_facecolor(get_chart_axes_bg())
-        ax.tick_params(colors=get_chart_text2(), which="both", labelsize=8)
+        ax.tick_params(colors=get_chart_text2(), which="both", labelsize=10)  # was 8
         ax.xaxis.label.set_color(get_chart_text2())
         ax.yaxis.label.set_color(get_chart_text2())
         ax.title.set_color(get_chart_text())
@@ -339,10 +358,15 @@ class Step2Widget(QWidget):
         self.fig.patch.set_facecolor(chart_bg)
         self.canvas.setStyleSheet(f"background-color: {chart_bg};")
         self._style_axes()
-        self.canvas.draw()
+        if self.detected_peaks and hasattr(self, 'processed_data') and self.processed_data is not None:
+            self._update_chart()
+        else:
+            self._hover_annotator.update_theme()
+            self.canvas.draw()
         # Refresh inline-styled labels
         self._title_label.setStyleSheet(step_title_font(13))
         self._instructions_label.setStyleSheet(instruction_banner_style())
+        style_toolbar(self.toolbar)
 
     # ──────────────────────────────────────────────────────────────────────
     # File selection
@@ -490,29 +514,7 @@ class Step2Widget(QWidget):
             peak_int = np.array([p.intensity for p in self.detected_peaks])
             
             # Update plot
-            self.axes.clear()
-            self.axes.plot(
-                self.processed_data.wavelength,
-                self.processed_data.corrected,
-                color=C_ACCENT, linewidth=0.9, alpha=0.9,
-                label="Spectrum"
-            )
-            self.axes.scatter(
-                peak_wl, peak_int,
-                color=C_WARN, s=32, marker="x", linewidths=1.4,
-                label=f"Peaks ({len(peak_wl)})", zorder=3
-            )
-            self.axes.set_xlabel("Wavelength (nm)")
-            self.axes.set_ylabel("Intensity")
-            self.axes.set_title("Detected Peaks")
-            leg = self.axes.legend(loc="upper right", fontsize=8, framealpha=0.6)
-            leg.get_frame().set_facecolor(get_chart_axes_bg())
-            leg.get_frame().set_edgecolor(get_chart_border())
-            for txt in leg.get_texts():
-                txt.set_color(get_chart_text2())
-            self._style_axes()
-            self.fig.tight_layout(pad=1.2)
-            self.canvas.draw()
+            self._update_chart()
             self.toolbar.home()
             
             # Update table
@@ -587,6 +589,9 @@ class Step2Widget(QWidget):
         self._table_prev_btn.setEnabled(self._table_page > 0)
         self._table_next_btn.setEnabled(self._table_page < n_pages - 1)
         self._table_count_label.setText(f"{n_total:,} peaks total")
+        self._table_copy_btn.setEnabled(True)
+        self._table_copy_btn.setChecked(False)
+        self._table_copy_btn.setText("⎘  Copy")
     
     def load_from_step1(self, processed_data) -> None:
         """

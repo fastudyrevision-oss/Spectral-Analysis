@@ -28,7 +28,10 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from src.gui.charts import ChartEngine
-from src.gui.gui_utils import HighDpiToolbar as NavigationToolbar2QT
+from src.gui.gui_utils import (
+    HighDpiToolbar as NavigationToolbar2QT,
+    make_table_toolbar, on_copy_table_clicked, ForegroundDelegate,
+)
 import src.gui.theme as _theme
 from src.gui.theme import (
     C_ACCENT, C_ACCENT2, C_SUCCESS, C_WARN, C_ERROR,
@@ -325,6 +328,10 @@ class SummaryWidget(QWidget):
         self._vc_table = self._make_small_table(
             ["Wavelength (nm)", "VC", "Quality"], 180
         )
+        # Quality column (index 2) uses per-item foreground colours that the
+        # global stylesheet would otherwise override — the delegate ensures
+        # the tier colour is always painted correctly.
+        self._vc_table.setItemDelegateForColumn(2, ForegroundDelegate(self._vc_table))
         content_layout.addWidget(self._wrap_table(self._vc_table, "Validation Results"))
 
         # ── Conclusions ───────────────────────────────────────────────────
@@ -381,12 +388,51 @@ class SummaryWidget(QWidget):
         return box
 
     def _wrap_table(self, table: QTableWidget, title: str) -> QGroupBox:
+        """Wrap a table in a QGroupBox with an integrated copy toolbar."""
         box = QGroupBox(title)
         bl = QVBoxLayout(box)
         bl.setContentsMargins(4, 4, 4, 4)
-        bl.addWidget(table)
+        bl.setSpacing(0)
+
+        # Build toolbar + container via shared utility
+        _container, copy_btn, row_label = make_table_toolbar(
+            table, row_label_text="— rows"
+        )
+        copy_btn.clicked.connect(
+            lambda _checked, t=table, b=copy_btn, l=row_label: on_copy_table_clicked(t, b, l)
+        )
+
+        # Store refs so populate methods can update them
+        if not hasattr(self, '_table_toolbars'):
+            self._table_toolbars: dict = {}
+        self._table_toolbars[id(table)] = (copy_btn, row_label)
+
+        bl.addWidget(_container)
         box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         return box
+
+    def _update_table_toolbar(self, table: QTableWidget) -> None:
+        """Enable copy button and update row label after a table is populated."""
+        entry = self._table_toolbars.get(id(table))
+        if entry is None:
+            return
+        copy_btn, row_label = entry
+        n = table.rowCount()
+        row_label.setText(f"{n} row{'s' if n != 1 else ''}")
+        copy_btn.setEnabled(n > 0)
+        copy_btn.setChecked(False)
+        copy_btn.setText("⎘  Copy")
+
+    def _reset_table_toolbar(self, table: QTableWidget) -> None:
+        """Disable copy button and reset row label when a table is cleared."""
+        entry = self._table_toolbars.get(id(table))
+        if entry is None:
+            return
+        copy_btn, row_label = entry
+        row_label.setText("— rows")
+        copy_btn.setEnabled(False)
+        copy_btn.setChecked(False)
+        copy_btn.setText("⎘  Copy")
 
     def _make_small_table(self, headers: list[str], min_height: int) -> QTableWidget:
         t = QTableWidget()
@@ -471,7 +517,6 @@ class SummaryWidget(QWidget):
             ChartEngine._show_placeholder(ax, "No data — run analysis first")
             ChartEngine.apply_dark_style(fig, ax)   # theme-aware: respects is_dark()
             canvas.draw()
-            canvas.draw()
 
     # ──────────────────────────────────────────────────────────────────────
     # Refresh  (called when user switches to this tab)
@@ -515,6 +560,7 @@ class SummaryWidget(QWidget):
             table.setSortingEnabled(False)
             table.setRowCount(0)
             table.setSortingEnabled(True)
+            self._reset_table_toolbar(table)
 
         # Reset conclusions
         self._conclusions_lbl.setText(
@@ -536,9 +582,9 @@ class SummaryWidget(QWidget):
                 wl = np.asarray(data.wavelength)
                 corr = np.asarray(data.corrected)
                 ax.plot(wl, corr, color=C_ACCENT, linewidth=0.9, alpha=0.95)
-                ax.set_xlabel("Wavelength (nm)", fontsize=8)
-                ax.set_ylabel("Intensity", fontsize=8)
-                ax.set_title("Corrected Spectrum", fontsize=9)
+                ax.set_xlabel("Wavelength (nm)", fontsize=11)   # was 8
+                ax.set_ylabel("Intensity", fontsize=11)          # was 8
+                ax.set_title("Corrected Spectrum", fontsize=12)  # was 9
                 ChartEngine.apply_dark_style(fig, ax)
                 pts = len(wl)
                 rng = f"{wl.min():.2f} – {wl.max():.2f} nm"
@@ -569,9 +615,9 @@ class SummaryWidget(QWidget):
                 intensities = np.array([p.intensity for p in peaks])
                 ax.hist(intensities, bins=min(30, len(peaks)),
                         color=C_ACCENT2, edgecolor='none', alpha=0.85)
-                ax.set_xlabel("Intensity", color=C_TEXT, fontsize=8)
-                ax.set_ylabel("Count", color=C_TEXT, fontsize=8)
-                ax.set_title("Peak Intensity Distribution", color=C_TEXT, fontsize=9)
+                ax.set_xlabel("Intensity", color=C_TEXT, fontsize=11)              # was 8
+                ax.set_ylabel("Count", color=C_TEXT, fontsize=11)                   # was 8
+                ax.set_title("Peak Intensity Distribution", color=C_TEXT, fontsize=12)  # was 9
                 ChartEngine.apply_dark_style(fig, ax)
 
                 # Update stat card
@@ -583,6 +629,7 @@ class SummaryWidget(QWidget):
                 for i, pk in enumerate(sorted_peaks):
                     self._peaks_table.setItem(i, 0, QTableWidgetItem(f"{pk.wavelength:.4f}"))
                     self._peaks_table.setItem(i, 1, QTableWidgetItem(f"{pk.intensity:.4g}"))
+                self._update_table_toolbar(self._peaks_table)
             except Exception:
                 logger.exception("summary step2 chart failed")
                 ChartEngine._show_placeholder(ax, "Chart unavailable")
@@ -592,6 +639,7 @@ class SummaryWidget(QWidget):
             ChartEngine.apply_dark_style(fig, ax)
             self._card_peaks.setText("—")
             self._peaks_table.setRowCount(0)
+            self._reset_table_toolbar(self._peaks_table)
         canvas.draw()
 
     # ── Step 3 ────────────────────────────────────────────────────────────
@@ -662,10 +710,12 @@ class SummaryWidget(QWidget):
                 self._rank_table.setItem(i, 0, QTableWidgetItem(str(row['Element'])))
                 self._rank_table.setItem(i, 1, QTableWidgetItem(str(int(row['Wins']))))
                 self._rank_table.setItem(i, 2, QTableWidgetItem(f"{row['Total_Score']:.3e}"))
+            self._update_table_toolbar(self._rank_table)
             primary = str(results.get('primary_element', '—'))
             self._card_primary.setText(primary)
         else:
             self._rank_table.setRowCount(0)
+            self._reset_table_toolbar(self._rank_table)
             self._card_primary.setText("—")
 
     # ── Step 5 ────────────────────────────────────────────────────────────
@@ -690,27 +740,18 @@ class SummaryWidget(QWidget):
                 self._vc_table.setItem(i, 0, QTableWidgetItem(
                     f"{row['Wavelength_nm']:.2f}"))
                 vc_val = row.get('Validation_Coefficient')
-                tier, bg, fg = ChartEngine.classify_vc(vc_val)
+                tier, cell_bg, cell_fg = ChartEngine.classify_vc(vc_val)
                 vc_str = f"{float(vc_val):.4f}" if (vc_val is not None and
                           not (isinstance(vc_val, float) and
                           __import__('math').isnan(vc_val))) else "—"
                 self._vc_table.setItem(i, 1, QTableWidgetItem(vc_str))
                 from PyQt6.QtGui import QColor
                 quality_item = QTableWidgetItem(tier)
-                # Always use white text on colored backgrounds — these accent
-                # colors (SUCCESS, WARN, ERROR, ACCENT) are all dark enough to
-                # carry white text on both themes.  For the "Failed" tier the
-                # bg returned by classify_vc is C_BG_CARD (dark) which is
-                # invisible in light mode, so we override it with a neutral grey.
-                if tier == "Failed":
-                    cell_bg  = "#888888" if not _theme.is_dark() else "#4A4F60"
-                    cell_fg  = "#FFFFFF"
-                else:
-                    cell_bg  = bg    # accent colors — always dark enough
-                    cell_fg  = "#FFFFFF"
                 quality_item.setBackground(QColor(cell_bg))
                 quality_item.setForeground(QColor(cell_fg))
                 self._vc_table.setItem(i, 2, quality_item)
+
+            self._update_table_toolbar(self._vc_table)
 
             valid = vresults['Validation_Coefficient'].dropna()
             if not valid.empty:
@@ -725,6 +766,7 @@ class SummaryWidget(QWidget):
                 self._card_mean_vc.setText("—")
         else:
             self._vc_table.setRowCount(0)
+            self._reset_table_toolbar(self._vc_table)
             self._card_mean_vc.setText("—")
 
     # ── Conclusions ───────────────────────────────────────────────────────
@@ -813,7 +855,7 @@ class SummaryWidget(QWidget):
                 df = results4.get(key)
                 if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
                     try:
-                        df.to_csv(out_dir / fname, index=False)
+                        df.to_csv(out_dir / fname, index=False, lineterminator='\n')
                     except Exception as exc:
                         logger.warning("CSV export failed for %s: %s", fname, exc)
 
@@ -821,7 +863,7 @@ class SummaryWidget(QWidget):
         if vresults is not None and not vresults.empty:
             fname = f"summary_step5_full_validation_{ts}.csv"
             try:
-                vresults.to_csv(out_dir / fname, index=False)
+                vresults.to_csv(out_dir / fname, index=False, lineterminator='\n')
             except Exception as exc:
                 logger.warning("CSV export failed for %s: %s", fname, exc)
 
@@ -831,7 +873,7 @@ class SummaryWidget(QWidget):
                 continue
             path = out_dir / fname
             try:
-                _table_to_df(table).to_csv(str(path), index=False)
+                _table_to_df(table).to_csv(str(path), index=False, lineterminator='\n')
                 saved.append(fname)
             except Exception as exc:
                 logger.warning("CSV export failed for %s: %s", fname, exc)

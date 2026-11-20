@@ -25,9 +25,11 @@ from src.io.file_reader import CSVReader
 from src.io.file_writer import CSVWriter, PlotGenerator
 from src.gui.gui_utils import (
     HighDpiToolbar as NavigationToolbar2QT,
+    style_toolbar,
     ParameterControl, FileSelector, WorkerThread,
     FileHistory, RecentFilesButton,
-    show_error, show_info
+    show_error, show_info,
+    on_copy_table_clicked,
 )
 from src.gui.theme import (
     primary_button_style, instruction_banner_style, step_title_font,
@@ -111,8 +113,8 @@ class Step1Widget(QWidget):
             "   • SG Window / Poly: Savitzky-Golay smoothing settings (window must be odd).\n"
             "3. Click 'Process' to run SG smoothing + ALS baseline correction.\n"
             "4. Use the chart tabs on the right to inspect the results.\n"
-            "5. Click 'Save Results' to export the processed CSV and baseline plot.\n"
-            "   ⚠ The saved CSV is required as input for Step 2."
+            "5. Corrected spectrum is automatically passed to Step 2, Step 5, and UPRSA in-memory.\n"
+            "   • Optional: Click 'Save Results' to export processed CSV and plots for reporting."
         )
         instructions.setWordWrap(True)
         instructions.setStyleSheet(instruction_banner_style())
@@ -271,6 +273,19 @@ class Step1Widget(QWidget):
         self._table_count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         table_header.addWidget(self._table_count_label)
 
+        # Copy toggle — appended to the existing pagination row
+        self._table_copy_btn = QPushButton("⎘  Copy")
+        self._table_copy_btn.setCheckable(True)
+        self._table_copy_btn.setFixedHeight(24)
+        self._table_copy_btn.setEnabled(False)
+        self._table_copy_btn.setToolTip("Copy visible page as TSV to clipboard.\nClick again to deselect.")
+        self._table_copy_btn.clicked.connect(
+            lambda: on_copy_table_clicked(
+                self.table, self._table_copy_btn, self._table_count_label
+            )
+        )
+        table_header.addWidget(self._table_copy_btn)
+
         tcl.addLayout(table_header)
 
         self.table = QTableWidget()
@@ -323,7 +338,7 @@ class Step1Widget(QWidget):
         border = get_chart_border()
         fig.patch.set_facecolor(chart_bg)
         ax.set_facecolor(axes_bg)
-        ax.tick_params(colors=text2, which="both", labelsize=8)
+        ax.tick_params(colors=text2, which="both", labelsize=10)  # was 8
         ax.xaxis.label.set_color(text2)
         ax.yaxis.label.set_color(text2)
         ax.title.set_color(text)
@@ -344,7 +359,7 @@ class Step1Widget(QWidget):
         leg.get_frame().set_alpha(0.85)
         for txt in leg.get_texts():
             txt.set_color(get_chart_text2())
-            txt.set_fontsize(8)
+            txt.set_fontsize(10)   # was 8
 
     def apply_theme(self) -> None:
         """Update inline styles and chart colours when theme changes."""
@@ -365,6 +380,10 @@ class Step1Widget(QWidget):
             self._style_ax(fig, ax)
             self._style_legend(ax)
             canvas.draw()
+        # Restyle all navigation toolbars so icons are visible in light theme
+        for tb in [self.toolbar_raw, self.toolbar_sg, self.toolbar_corr,
+                   self.toolbar_sep, self.toolbar_conv]:
+            style_toolbar(tb)
 
     # ──────────────────────────────────────────────────────────────────────
     # Event handlers
@@ -464,6 +483,12 @@ class Step1Widget(QWidget):
                 f"to {np.max(self.processed_data.corrected):.2e}"
             )
             self.save_button.setEnabled(True)
+
+            try:
+                from src.gui.session_manager import save_step1
+                save_step1(self.processed_data)
+            except Exception:
+                pass
 
             # Notify next step — pass data object directly (no file round-trip)
             self.result_ready.emit(self.processed_data)
@@ -687,6 +712,9 @@ class Step1Widget(QWidget):
         self._table_prev_btn.setEnabled(self._table_page > 0)
         self._table_next_btn.setEnabled(self._table_page < n_pages - 1)
         self._table_count_label.setText(f"{n_total:,} rows total")
+        self._table_copy_btn.setEnabled(True)
+        self._table_copy_btn.setChecked(False)
+        self._table_copy_btn.setText("⎘  Copy")
 
     def _on_save_clicked(self):
         if self.processed_data is None:
